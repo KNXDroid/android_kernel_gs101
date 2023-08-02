@@ -61,6 +61,9 @@ sha512-arm64-y := sha512-glue.o sha512-core.o
 
 obj-$(CONFIG_CRYPTO_CHACHA20_NEON) += chacha-neon.o
 chacha-neon-y := chacha-neon-core.o chacha-neon-glue.o
+CFLAGS_REMOVE_chacha-neon-core.o = -flto
+CFLAGS_REMOVE_chacha-neon.o = -flto
+CFLAGS_REMOVE_chacha-neon-glue.o = -flto
 
 obj-$(CONFIG_CRYPTO_POLY1305_NEON) += poly1305-neon.o
 poly1305-neon-y := poly1305-core.o poly1305-glue.o

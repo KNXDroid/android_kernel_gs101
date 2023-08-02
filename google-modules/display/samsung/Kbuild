@@ -9,6 +9,9 @@ subdir-ccflags-y += -I$(KERNEL_SRC)/../private/google-modules/bms
 
 ccflags-y += -I$(srctree)/$(src)/cal_common
 ccflags-$(CONFIG_SOC_ZUMA) += -DCONFIG_DRM_LEGACY=1
+ccflags-y += -O2
+CFLAGS_REMOVE_exynos_drm_dsim.o = -flto
+CFLAGS_REMOVE_exynos_drm_fb.o = -flto
 
 ifneq ($(filter y, $(CONFIG_SOC_GS101) $(CONFIG_SOC_GS201)),)
 ccflags-y += -I$(srctree)/$(src)/cal_9845

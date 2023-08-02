@@ -116,6 +116,31 @@ int fvmap_set_raw_voltage_table(unsigned int id, int uV)
 	return 0;
 }
 
+// For ID 0xb040004 (CPU6), 20 Levels
+static const int cpu6_undervolt_uv[] = {
+	3000,
+	2000,
+	1000,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+};
+
 // For ID 0xb040005 (GPU0), 12 Levels
 static const int gpu0_undervolt_uv[] = {
 	-18750, // [ 0] Freq: 848 KHz
@@ -162,6 +187,10 @@ int fvmap_get_voltage_table(unsigned int id, unsigned int *table)
 	num_of_lv = fvmap_header[idx].num_of_lv;
 
 	switch (id) {
+		case 0xb040004:
+			if (num_of_lv == sizeof(cpu6_undervolt_uv) / sizeof(int))
+				undervolt_table = cpu6_undervolt_uv;
+		break;
 		case 0xb040005:
 			if (num_of_lv == sizeof(gpu0_undervolt_uv) / sizeof(int))
 				undervolt_table = gpu0_undervolt_uv;
