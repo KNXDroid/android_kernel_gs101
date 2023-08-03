@@ -111,6 +111,12 @@
  */
 #define RESIDENCY_THRESHOLD_NS	(15 * NSEC_PER_USEC)
 
+/*
+ * Idle state target residency threshold used for deciding whether or not to
+ * check the time till the closest expected timer event.
+ */
+#define RESIDENCY_THRESHOLD_NS	(15 * NSEC_PER_USEC)
+
 /**
  * struct teo_bin - Metrics used by the TEO cpuidle governor.
  * @intercepts: The "intercepts" metric.
