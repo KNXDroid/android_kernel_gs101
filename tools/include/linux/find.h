@@ -105,6 +105,11 @@ unsigned long find_next_zero_bit(const unsigned long *addr, unsigned long size,
 }
 #endif
 
+extern unsigned long find_first_and_and_bit(const unsigned long *addr1,
+					    const unsigned long *addr2,
+					    const unsigned long *addr3,
+					    unsigned long size);
+
 #ifndef find_first_bit
 /**
  * find_first_bit - find the first set bit in a memory region
