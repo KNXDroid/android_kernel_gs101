@@ -2669,7 +2669,7 @@ EXPORT_SYMBOL(cpufreq_update_policy);
 void cpufreq_update_limits(unsigned int cpu)
 {
 	if (cpufreq_driver->update_limits)
-		cpufreq_driver->update_limits(cpu);
+		cpufreq_driver->update_limits(policy);
 	else
 		cpufreq_policy_refresh(policy);
 }
