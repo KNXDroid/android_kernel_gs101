@@ -9,6 +9,7 @@ export KERNEL_SRC := $(srctree)/google-modules
 
 obj-y += amplifiers/cs35l41/
 obj-y += amplifiers/cs40l25/
+obj-y += amplifiers/cs40l26/
 obj-y += amplifiers/drv2624/
 obj-y += amplifiers/snd_soc_wm_adsp/
 obj-y += aoc/
@@ -34,6 +35,6 @@ obj-y += soc/gs/
 obj-y += touch/common/
 obj-y += touch/fts/ftm5_legacy/
 obj-y += trusty/
-obj-y += uwb/qorvo/dw3000/kernel/
+obj-y += uwb/qorvo/dw3000/kernel/ uwb/qorvo/qm35/qm35s/
 obj-y += video/gchips/
 obj-y += wlan/bcm4389/

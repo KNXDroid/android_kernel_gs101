@@ -103,12 +103,15 @@ static inline void gvotable_lock_election(struct gvotable_election *el)
 	mutex_lock(&(el)->re_lock);
 }
 
-#define gvotable_unlock_callback(el) mutex_unlock(&(el)->cb_lock)
+static inline void gvotable_unlock_callback(struct gvotable_election *el)
+{
+	mutex_unlock(&(el)->cb_lock);
+}
 
 static inline void gvotable_unlock_election(struct gvotable_election *el)
 {
 	mutex_unlock(&(el)->re_lock);
-	mutex_unlock(&(el)->cb_lock);
+	gvotable_unlock_callback(el);
 }
 
 struct election_slot {

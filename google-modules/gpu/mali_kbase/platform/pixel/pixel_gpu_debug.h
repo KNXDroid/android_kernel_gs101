@@ -117,7 +117,7 @@ struct pixel_gpu_pdc_status {
 	} state;
 } __attribute__((packed));
 
-#if MALI_USE_CSF && defined(CONFIG_MALI_PIXEL_GPU_SSCD)
+#if defined(CONFIG_MALI_PIXEL_GPU_SSCD)
 void gpu_debug_read_pdc_status(struct kbase_device *kbdev, struct pixel_gpu_pdc_status *status);
 void gpu_debug_dump_pdc_status(struct kbase_device *kbdev);
 #else
@@ -131,5 +131,4 @@ static void __maybe_unused gpu_debug_dump_pdc_status(struct kbase_device *kbdev)
 	(void)kbdev;
 }
 #endif
-
 #endif /* _PIXEL_GPU_DEBUG_H_ */

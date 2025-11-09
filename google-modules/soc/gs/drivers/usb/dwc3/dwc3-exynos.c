@@ -1075,6 +1075,14 @@ static ssize_t usb_data_enabled_store(struct device *dev, struct device_attribut
 
 	exynos->usb_data_enabled = enabled;
 
+	if (exynos->usb_data_enabled) {
+		if (extcon_get_state(exynos->edev, EXTCON_USB) > 0)
+			dwc3_exynos_device_event(exynos->dev, 1);
+		else if (extcon_get_state(exynos->edev, EXTCON_USB_HOST) > 0)
+			dwc3_exynos_host_event(exynos->dev, 1);
+		dwc3_exynos_wait_role(exynos->dotg);
+	}
+
 	return n;
 }
 static DEVICE_ATTR_RW(usb_data_enabled);
