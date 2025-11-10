@@ -333,6 +333,7 @@ unsigned int vclk_get_min_freq(unsigned int id)
 	return rate;
 }
 
+
 int vclk_get_rate_table(unsigned int id, unsigned long *table)
 {
 	struct vclk *vclk;
@@ -342,9 +343,13 @@ int vclk_get_rate_table(unsigned int id, unsigned long *table)
 	vclk = cmucal_get_node(id);
 	if (!vclk || !IS_VCLK(vclk->id))
 		return 0;
+
 	if (vclk->lut) {
-		for (i = 0; i < vclk->num_rates; i++)
+		printk(KERN_INFO "vclk: Rate table for id=0x%x\n", id);
+		for (i = 0; i < vclk->num_rates; i++) {
 			table[i] = vclk->lut[i].rate;
+			printk(KERN_INFO "vclk: [%d] = %lu Hz\n", i, table[i]);
+		}
 		nums = vclk->num_rates;
 	}
 

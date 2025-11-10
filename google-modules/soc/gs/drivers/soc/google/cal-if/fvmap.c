@@ -132,8 +132,12 @@ int fvmap_get_voltage_table(unsigned int id, unsigned int *table)
 	fv_table = fvmap_base + fvmap_header[idx].o_ratevolt;
 	num_of_lv = fvmap_header[idx].num_of_lv;
 
-	for (i = 0; i < num_of_lv; i++)
+	printk(KERN_INFO "fvmap: Voltage table for id=0x%x\n", id);
+
+	for (i = 0; i < num_of_lv; i++) {
 		table[i] = fv_table->table[i].volt;
+		printk(KERN_INFO "fvmap: [%d] = %u mV\n", i, table[i]);
+	}
 
 	return num_of_lv;
 }
