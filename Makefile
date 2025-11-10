@@ -1532,7 +1532,7 @@ dtstree ?= arch/$(SRCARCH)/boot/dts
 endif
 
 dtstree := google-devices/gs101/dts
-DTC_INCLUDE := $(srctree)/google-modules/soc/gs/include/dtc
+DTC_INCLUDE := $(srctree)/google-modules/soc/gs/include
 export DTC_INCLUDE
 
 ifneq ($(dtstree),)
