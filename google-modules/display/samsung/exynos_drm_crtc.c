@@ -28,6 +28,11 @@
 
 #include <dqe_cal.h>
 
+#include <linux/ktime.h>
+#include <linux/export.h>
+#include <linux/atomic.h>
+#include <linux/display_fps.h>
+
 #include "exynos_drm_crtc.h"
 #include "exynos_drm_decon.h"
 #include "exynos_drm_drv.h"
@@ -39,6 +44,24 @@ enum crtc_active_state {
 	CRTC_STATE_SELF_REFRESH,
 };
 
+static atomic_t long_term_frame_count = ATOMIC_INIT(0);
+static ktime_t long_term_last_time;
+static u32 long_term_average_fps;
+
+static atomic_t short_term_frame_count = ATOMIC_INIT(0);
+static ktime_t short_term_last_time;
+
+atomic_t display_fps = ATOMIC_INIT(0);
+
+/*
+ * See include/linux/exynos_fps.h for documentation.
+ */
+u32 display_drm_get_average_fps(void)
+{
+	return atomic_read(&display_fps);
+}
+EXPORT_SYMBOL_GPL(display_drm_get_average_fps);
+
 static void exynos_drm_crtc_atomic_enable(struct drm_crtc *crtc,
 					  struct drm_atomic_state *state)
 {
@@ -48,6 +71,16 @@ static void exynos_drm_crtc_atomic_enable(struct drm_crtc *crtc,
 
 	if (active_state == exynos_crtc->active_state)
 		return;
+
+	if (exynos_crtc->active_state == CRTC_STATE_INACTIVE) {
+		ktime_t now = ktime_get();
+		long_term_last_time = now;
+		short_term_last_time = now;
+		atomic_set(&long_term_frame_count, 0);
+		atomic_set(&short_term_frame_count, 0);
+		long_term_average_fps = 0;
+		atomic_set(&display_fps, 0);
+	}
 
 	if (exynos_crtc->ops->enable)
 		exynos_crtc->ops->enable(exynos_crtc, old_state);
@@ -283,6 +316,40 @@ static void exynos_crtc_atomic_flush(struct drm_crtc *crtc,
 {
 	struct drm_crtc_state *old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
 	struct exynos_drm_crtc *exynos_crtc = to_exynos_crtc(crtc);
+
+	if (crtc->state->active) {
+		ktime_t now = ktime_get();
+		s64 long_term_delta_ms = ktime_to_ms(ktime_sub(now, long_term_last_time));
+		s64 short_term_delta_ms = ktime_to_ms(ktime_sub(now, short_term_last_time));
+
+		atomic_inc(&long_term_frame_count);
+		atomic_inc(&short_term_frame_count);
+
+		if (long_term_delta_ms >= 1000) {
+			long_term_average_fps = (atomic_read(&long_term_frame_count) * 1000)
+			/ long_term_delta_ms;
+
+			atomic_set(&long_term_frame_count, 0);
+			long_term_last_time = now;
+		}
+
+		if (short_term_delta_ms >= 150) {
+			u32 short_term_current_fps = (atomic_read(&short_term_frame_count) * 1000)
+			/ short_term_delta_ms;
+
+			if (short_term_current_fps > long_term_average_fps) {
+				atomic_set(&display_fps, short_term_current_fps);
+			} else {
+				atomic_set(&display_fps, long_term_average_fps);
+			}
+
+			atomic_set(&short_term_frame_count, 0);
+			short_term_last_time = now;
+		}
+	} else {
+		long_term_average_fps = 0;
+		atomic_set(&display_fps, 0);
+	}
 
 	if (exynos_crtc->ops->atomic_flush)
 		exynos_crtc->ops->atomic_flush(exynos_crtc, old_crtc_state);
