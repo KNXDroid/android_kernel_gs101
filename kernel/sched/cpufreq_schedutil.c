@@ -8,7 +8,16 @@
 
 #include <trace/hooks/sched.h>
 
+#include <linux/display_fps.h>
+
+#include <linux/ktime.h>
+
 #define IOWAIT_BOOST_MIN	(SCHED_CAPACITY_SCALE / 8)
+
+static atomic_long_t per_cpu_actual_sum[NR_CPUS];
+static atomic_t per_cpu_actual_count[NR_CPUS];
+static ktime_t per_cpu_last_avg_time[NR_CPUS];
+static u32 per_cpu_average_actual[NR_CPUS];
 
 struct sugov_tunables {
 	struct gov_attr_set	attr_set;
@@ -301,8 +310,44 @@ unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 				 unsigned long min,
 				 unsigned long max)
 {
-	/* Add dvfs headroom to actual utilization */
-	actual = apply_dvfs_headroom(actual, cpu);
+	u32 fps = display_drm_get_average_fps();
+	ktime_t now;
+	s64 delta_ms;
+
+	now = ktime_get();
+
+	if (unlikely(ktime_to_ns(per_cpu_last_avg_time[cpu]) == 0))
+		per_cpu_last_avg_time[cpu] = now;
+
+	delta_ms = ktime_to_ms(ktime_sub(now, per_cpu_last_avg_time[cpu]));
+
+	if (delta_ms >= 1500) {
+		long sum = atomic_long_read(&per_cpu_actual_sum[cpu]);
+		int count = atomic_read(&per_cpu_actual_count[cpu]);
+
+		if (count > 0)
+			per_cpu_average_actual[cpu] = sum / count;
+		else
+			per_cpu_average_actual[cpu] = 0;
+
+		atomic_long_set(&per_cpu_actual_sum[cpu], 0);
+		atomic_set(&per_cpu_actual_count[cpu], 0);
+		per_cpu_last_avg_time[cpu] = now;
+	}
+
+	atomic_long_add(actual, &per_cpu_actual_sum[cpu]);
+	atomic_inc(&per_cpu_actual_count[cpu]);
+
+
+	if (fps > 20) {
+		actual = apply_dvfs_headroom(actual, cpu);
+	} else {
+		unsigned long threshold = (max * 30) / 100;
+
+		if (per_cpu_average_actual[cpu] < threshold)
+			actual = 0;
+	}
+
 	/* Actually we don't need to target the max performance */
 	if (actual < max)
 		max = actual;
