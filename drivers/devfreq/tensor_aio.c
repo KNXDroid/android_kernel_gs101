@@ -7,6 +7,7 @@
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/of_platform.h>
+#include <linux/spinlock.h>
 #include <linux/perf/arm_pmuv3.h>
 #include <linux/reboot.h>
 #include <linux/rtmutex.h>
@@ -30,6 +31,17 @@
 #elif defined(CONFIG_SOC_ZUMA)
 #include <dt-bindings/clock/zuma.h>
 #endif
+
+static void tensor_aio_raw_spin_lock(void *lock)
+{
+	_raw_spin_lock(lock);
+}
+
+static void tensor_aio_raw_spin_unlock(void *lock)
+{
+	_raw_spin_unlock(lock);
+}
+
 
 /* Poll memperfd about every 10 ms */
 #define MEMPERFD_POLL_HZ (HZ / 100)
@@ -2166,8 +2178,8 @@ static int exynos_devfreq_probe(struct platform_device *pdev)
 		raw_spin_lock_init(&data->min_nb_lock.raw_spinlock);
 		raw_spin_lock_init(&data->max_nb_lock.raw_spinlock);
 		raw_spin_lock_init(&data->nb_lock.raw_spinlock);
-		data->nb_lock_fn = (void *)_raw_spin_lock;
-		data->nb_unlock_fn = (void *)_raw_spin_unlock;
+		data->nb_lock_fn = tensor_aio_raw_spin_lock;
+		data->nb_unlock_fn = tensor_aio_raw_spin_unlock;
 	} else {
 		rt_mutex_init(&data->min_nb_lock.rt_mutex);
 		rt_mutex_init(&data->max_nb_lock.rt_mutex);
