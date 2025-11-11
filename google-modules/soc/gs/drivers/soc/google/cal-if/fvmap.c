@@ -116,12 +116,41 @@ int fvmap_set_raw_voltage_table(unsigned int id, int uV)
 	return 0;
 }
 
+// For ID 0xb040005 (GPU0), 12 Levels
+static const int gpu0_undervolt_uv[] = {
+	-18750, // [ 0] Freq: 848 KHz
+	-18750, // [ 1] Freq: 762 KHz
+	-18750,  // [ 2] Freq: 701 KHz
+	-18750,  // [ 3] Freq: 572 KHz
+	-18750,  // [ 4] Freq: 510 KHz
+	-18750,  // [ 5] Freq: 471 KHz
+	-18750,  // [ 6] Freq: 400 KHz
+	-18750,  // [ 7] Freq: 351 KHz
+	-18750,  // [ 8] Freq: 302 KHz
+	-18750,  // [ 9] Freq: 251 KHz
+	-18750,  // [10] Freq: 202 KHz
+	-18750,  // [11] Freq: 151 KHz
+};
+
+// For ID 0xb040006 (GPU1), 7 Levels
+static const int gpu1_undervolt_uv[] = {
+	-7500,  // [ 0] Freq: 996 KHz
+	-7500,  // [ 1] Freq: 885 KHz
+	-5000,  // [ 2] Freq: 750 KHz
+	-5000,  // [ 3] Freq: 603 KHz
+	-2500,  // [ 4] Freq: 434 KHz
+	0,      // [ 5] Freq: 302 KHz
+	0,      // [ 6] Freq: 151 KHz
+};
+
 int fvmap_get_voltage_table(unsigned int id, unsigned int *table)
 {
 	struct fvmap_header *fvmap_header = fvmap_base;
 	struct rate_volt_header *fv_table;
 	int idx, i;
 	int num_of_lv;
+	const int *undervolt_table = NULL;
+	int voltage_offset = 0;
 
 	if (!IS_ACPM_VCLK(id))
 		return 0;
@@ -132,11 +161,45 @@ int fvmap_get_voltage_table(unsigned int id, unsigned int *table)
 	fv_table = fvmap_base + fvmap_header[idx].o_ratevolt;
 	num_of_lv = fvmap_header[idx].num_of_lv;
 
-	printk(KERN_INFO "fvmap: Voltage table for id=0x%x\n", id);
+	switch (id) {
+		case 0xb040005:
+			if (num_of_lv == sizeof(gpu0_undervolt_uv) / sizeof(int))
+				undervolt_table = gpu0_undervolt_uv;
+		break;
+		case 0xb040006:
+			if (num_of_lv == sizeof(gpu1_undervolt_uv) / sizeof(int))
+				undervolt_table = gpu1_undervolt_uv;
+		break;
+	}
+
+	printk(KERN_INFO "fvmap: Modifying voltage table for id=0x%x\n", id);
 
 	for (i = 0; i < num_of_lv; i++) {
-		table[i] = fv_table->table[i].volt;
-		printk(KERN_INFO "fvmap: [%d] = %u mV\n", i, table[i]);
+		voltage_offset = 0;
+		if (undervolt_table) {
+			voltage_offset = undervolt_table[i];
+		}
+
+		unsigned int original_volt = fv_table->table[i].volt;
+		unsigned int new_volt = original_volt;
+
+		if (voltage_offset != 0) {
+			if ((int)original_volt + voltage_offset > 500000) {
+				new_volt = original_volt + voltage_offset;
+			} else {
+				new_volt = original_volt;
+				printk(KERN_WARNING "fvmap: [%d] Undervolt for id=0x%x too aggressive, skipping.\n", i, id);
+			}
+		}
+
+		table[i] = new_volt;
+
+		if (voltage_offset != 0) {
+			printk(KERN_INFO "fvmap: [%d] New: %u uV (Original: %u uV, Offset: %d uV)\n",
+				   i, new_volt, original_volt, voltage_offset);
+		} else {
+			printk(KERN_INFO "fvmap: [%d] %u uV\n", i, new_volt);
+		}
 	}
 
 	return num_of_lv;
