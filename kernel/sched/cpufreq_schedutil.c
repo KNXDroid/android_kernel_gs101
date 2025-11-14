@@ -291,6 +291,15 @@ static inline unsigned long apply_dvfs_headroom(unsigned long util, int cpu)
 	return util + headroom;
 }
 
+static ktime_t per_cpu_last_avg_time[NR_CPUS];
+static u32 per_cpu_average_actual[NR_CPUS];
+static atomic_long_t per_cpu_actual_sum[NR_CPUS];
+static atomic_t per_cpu_actual_count[NR_CPUS];
+
+static ktime_t high_load_start_time[NR_CPUS];
+static bool high_load_sustained[NR_CPUS];
+
+
 unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 				 unsigned long min,
 				 unsigned long max)
@@ -306,6 +315,7 @@ unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 
 	delta_ms = ktime_to_ms(ktime_sub(now, per_cpu_last_avg_time[cpu]));
 
+	/* Calculate the average actual performance over a 1500ms window */
 	if (delta_ms >= 1500) {
 		long sum = atomic_long_read(&per_cpu_actual_sum[cpu]);
 		int count = atomic_read(&per_cpu_actual_count[cpu]);
@@ -324,16 +334,55 @@ unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 	atomic_inc(&per_cpu_actual_count[cpu]);
 
 
-	if (fps > 20) {
+	if (fps > 40) {
+		/* If display FPS is high, apply performance headroom */
 		actual = apply_dvfs_headroom(actual, cpu);
+
+		/* Reset high load tracking when FPS is high */
+		high_load_start_time[cpu] = 0;
+		high_load_sustained[cpu] = false;
 	} else {
 		unsigned long threshold = (max * 30) / 100;
+		unsigned long high_load_threshold = (max * 60) / 100;
 
-		if (per_cpu_average_actual[cpu] < threshold)
-			actual = 0;
+		/*
+		 * Check for sustained high load when FPS is low.
+		 * A load is considered high if the current actual performance is
+		 * greater than 60% of the maximum possible performance.
+		 */
+		if (actual > high_load_threshold) {
+			if (high_load_start_time[cpu] == 0) {
+				/* First time detecting high load, record start time */
+				high_load_start_time[cpu] = now;
+				high_load_sustained[cpu] = false;
+			} else {
+				/* High load was already detected, check how long it has been sustained */
+				s64 high_load_delta_ms = ktime_to_ms(ktime_sub(now, high_load_start_time[cpu]));
+				if (high_load_delta_ms > 20) {
+					/* Load has been high for more than 20ms */
+					high_load_sustained[cpu] = true;
+				}
+			}
+		} else {
+			/* Load spike has disappeared, reset the timer and state */
+			high_load_start_time[cpu] = 0;
+			high_load_sustained[cpu] = false;
+		}
+
+		if (high_load_sustained[cpu]) {
+			/* If load is high for a sustained period, use headroom */
+			actual = apply_dvfs_headroom(actual, cpu);
+		} else {
+			/*
+			 * If there is no sustained high load and the long-term
+			 * average is below a low threshold, target zero performance.
+			 */
+			if (per_cpu_average_actual[cpu] < threshold)
+				actual = 0;
+		}
 	}
 
-	/* Actually we don't need to target the max performance */
+	/* We don't need to target a performance level higher than the current demand */
 	if (actual < max)
 		max = actual;
 
