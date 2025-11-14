@@ -299,7 +299,7 @@ static int fb_notifier_cb(struct notifier_block *nb,
 	int *blank = evdata->data;
 
 	/* Parse framebuffer blank events as soon as they occur */
-	if (action != FB_EARLY_EVENT_BLANK)
+	if (action != FB_EVENT_BLANK)
 		return NOTIFY_OK;
 
 	/* Boost when the screen turns on and unboost when it turns off */
@@ -396,11 +396,6 @@ static struct input_handler cpu_input_boost_input_handler = {
 	.id_table	= cpu_input_boost_ids
 };
 
-<<<<<<< HEAD
-extern struct drm_panel *lcd_active_panel;
-
-=======
->>>>>>> a80eaad74130b (cpu_input_boost: Convert to fb_notifier)
 static int __init cpu_input_boost_init(void)
 {
 	struct boost_drv *b = &boost_drv_g;
