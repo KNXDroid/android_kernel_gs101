@@ -312,7 +312,7 @@ static void exynos_crtc_atomic_begin(struct drm_crtc *crtc,
 }
 
 #define LONG_TERM_MA_WINDOW 60
-#define SHORT_TERM_MA_WINDOW 6
+#define SHORT_TERM_MA_WINDOW 10
 
 static void exynos_crtc_atomic_flush(struct drm_crtc *crtc,
 									 struct drm_atomic_state *state)
