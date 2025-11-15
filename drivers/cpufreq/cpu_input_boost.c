@@ -6,6 +6,7 @@
 
 #define pr_fmt(fmt) "cpu_input_boost: " fmt
 
+#include <linux/atomic.h>
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/fb.h>
@@ -16,8 +17,14 @@
 #include <linux/version.h>
 #include <linux/workqueue.h>
 
+/*
+ * 1 when any boost is active, 0 otherwise.
+ */
+atomic_t cpu_input_boost_active = ATOMIC_INIT(0);
+EXPORT_SYMBOL(cpu_input_boost_active);
+
 #define INPUT_BOOST_DURATION_MS 150
-#define INPUT_BOOST_COOLDOWN_MS 850
+#define INPUT_BOOST_COOLDOWN_MS 650
 
 static unsigned int input_boost_freq __read_mostly =
 CONFIG_INPUT_BOOST_FREQ;
@@ -66,6 +73,14 @@ static struct boost_drv boost_drv_g __read_mostly = {
 																																  cpu_input_boost_init_work, 0),
 };
 
+static inline void update_boost_active_flag(struct boost_drv *b)
+{
+	if (test_bit(INPUT_BOOST, &b->state) || test_bit(MAX_BOOST, &b->state))
+		atomic_set(&cpu_input_boost_active, 1);
+	else
+		atomic_set(&cpu_input_boost_active, 0);
+}
+
 static void update_cpu_boost_qos(struct boost_drv *b)
 {
 	s32 target_freq = FREQ_QOS_MIN_DEFAULT_VALUE;
@@ -107,6 +122,7 @@ static void __cpu_input_boost_kick(struct boost_drv *b)
 
 	set_bit(INPUT_BOOST, &b->state);
 	update_cpu_boost_qos(b);
+	update_boost_active_flag(b);
 
 	mod_delayed_work(system_unbound_wq, &b->input_unboost,
 					 msecs_to_jiffies(INPUT_BOOST_DURATION_MS));
@@ -131,6 +147,7 @@ static void __cpu_input_boost_kick_max(struct boost_drv *b, unsigned int ms)
 
 		set_bit(MAX_BOOST, &b->state);
 		update_cpu_boost_qos(b);
+		update_boost_active_flag(b);
 		mod_delayed_work(system_unbound_wq, &b->max_unboost, j);
 }
 
@@ -141,6 +158,7 @@ static void input_unboost_worker(struct work_struct *work)
 	struct boost_drv *b = container_of(to_delayed_work(work), typeof(*b), input_unboost);
 	clear_bit(INPUT_BOOST, &b->state);
 	update_cpu_boost_qos(b);
+	update_boost_active_flag(b);
 }
 
 static void max_unboost_worker(struct work_struct *work)
@@ -148,6 +166,7 @@ static void max_unboost_worker(struct work_struct *work)
 	struct boost_drv *b = container_of(to_delayed_work(work), typeof(*b), max_unboost);
 	clear_bit(MAX_BOOST, &b->state);
 	update_cpu_boost_qos(b);
+	update_boost_active_flag(b);
 }
 
 static int fb_notifier_cb(struct notifier_block *nb, unsigned long action, void *data)
@@ -167,6 +186,7 @@ static int fb_notifier_cb(struct notifier_block *nb, unsigned long action, void 
 		clear_bit(INPUT_BOOST, &b->state);
 		clear_bit(MAX_BOOST, &b->state);
 		update_cpu_boost_qos(b);
+		update_boost_active_flag(b);
 	}
 	return NOTIFY_OK;
 }
@@ -300,5 +320,7 @@ static void __exit cpu_input_boost_exit(void)
 	for (i = 0; i < b->num_policies; i++) {
 		freq_qos_remove_request(&b->qos_reqs[i]);
 	}
+	/* Ensure the flag is cleared on exit */
+	atomic_set(&cpu_input_boost_active, 0);
 }
 module_exit(cpu_input_boost_exit);
