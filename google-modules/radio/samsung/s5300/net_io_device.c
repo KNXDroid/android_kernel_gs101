@@ -31,6 +31,8 @@
 #include "cpif_qos_info.h"
 #endif
 
+#define VNET_NEEDED_HEADROOM (32)
+
 static int vnet_open(struct net_device *ndev)
 {
 	struct vnet *vnet = netdev_priv(ndev);
@@ -145,14 +147,6 @@ static netdev_tx_t vnet_xmit(struct sk_buff *skb, struct net_device *ndev)
 		cfg_sit = 0;
 		headroom = 0;
 		tailroom = 0;
-	}
-
-	if ((skb_headroom(skb) < headroom) || (skb_tailroom(skb) < tailroom)) {
-		skb_new = skb_copy_expand(skb, headroom, tailroom, GFP_ATOMIC);
-		if (!skb_new) {
-			mif_info("%s: ERR! skb_copy_expand fail\n", iod->name);
-			goto retry;
-		}
 	}
 #endif
 
@@ -362,4 +356,5 @@ void vnet_setup(struct net_device *ndev)
 	ndev->mtu = ETH_DATA_LEN;
 	ndev->watchdog_timeo = 5 * HZ;
 	ndev->features |= (NETIF_F_GRO | NETIF_F_GRO_UDP_FWD);
+	ndev->needed_headroom = VNET_NEEDED_HEADROOM;
 }
