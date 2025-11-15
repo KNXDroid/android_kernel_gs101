@@ -5633,8 +5633,6 @@ static int
 dhdpcie_bus_membytes(dhd_bus_t *bus, bool write, ulong address, uint8 *data, uint size)
 {
 	uint dsize;
-	int detect_endian_flag = 0x01;
-	bool little_endian;
 
 	if (bus->is_linkdown) {
 		DHD_ERROR(("%s: PCIe link was down\n", __FUNCTION__));
@@ -5644,69 +5642,72 @@ dhdpcie_bus_membytes(dhd_bus_t *bus, bool write, ulong address, uint8 *data, uin
 	if (MULTIBP_ENAB(bus->sih)) {
 		dhd_bus_pcie_pwr_req(bus);
 	}
-	/* Detect endianness. */
-	little_endian = *(char *)&detect_endian_flag;
 
-	/* In remap mode, adjust address beyond socram and redirect
-	 * to devram at SOCDEVRAM_BP_ADDR since remap address > orig_ramsize
-	 * is not backplane accessible
-	 */
+	/* Use byte-wise access for small or unaligned transfers */
+	if (size < 8 || ((address % 4) != 0)) {
+		dsize = sizeof(uint8);
+		while (size) {
+			if (write)
+				dhdpcie_bus_wtcm8(bus, address, *data);
+			else
+				*data = dhdpcie_bus_rtcm8(bus, address);
+			size -= dsize;
+			data += dsize;
+			address += dsize;
+		}
+		goto done;
+	}
 
-	/* Determine initial transfer parameters */
+	/* Handle unaligned start */
+	while ((address % 8) != 0) {
+		dsize = sizeof(uint8);
+		if (write)
+			dhdpcie_bus_wtcm8(bus, address, *data);
+		else
+			*data = dhdpcie_bus_rtcm8(bus, address);
+		size -= dsize;
+		data += dsize;
+		address += dsize;
+	}
+
+/* Handle the main aligned body */
 #ifdef DHD_SUPPORT_64BIT
 	dsize = sizeof(uint64);
-#else /* !DHD_SUPPORT_64BIT */
-	dsize = sizeof(uint32);
-#endif /* DHD_SUPPORT_64BIT */
-
-	/* Do the transfer(s) */
-	if (write) {
-		while (size) {
-#ifdef DHD_SUPPORT_64BIT
-			if (size >= sizeof(uint64) && little_endian &&	!(address % 8)) {
-				dhdpcie_bus_wtcm64(bus, address, *((uint64 *)data));
-			}
-#else /* !DHD_SUPPORT_64BIT */
-			if (size >= sizeof(uint32) && little_endian &&	!(address % 4)) {
-				dhdpcie_bus_wtcm32(bus, address, *((uint32*)data));
-			}
-#endif /* DHD_SUPPORT_64BIT */
-			else {
-				dsize = sizeof(uint8);
-				dhdpcie_bus_wtcm8(bus, address, *data);
-			}
-
-			/* Adjust for next transfer (if any) */
-			if ((size -= dsize)) {
-				data += dsize;
-				address += dsize;
-			}
-		}
-	} else {
-		while (size) {
-#ifdef DHD_SUPPORT_64BIT
-			if (size >= sizeof(uint64) && little_endian &&	!(address % 8))
-			{
-				*(uint64 *)data = dhdpcie_bus_rtcm64(bus, address);
-			}
-#else /* !DHD_SUPPORT_64BIT */
-			if (size >= sizeof(uint32) && little_endian &&	!(address % 4))
-			{
-				*(uint32 *)data = dhdpcie_bus_rtcm32(bus, address);
-			}
-#endif /* DHD_SUPPORT_64BIT */
-			else {
-				dsize = sizeof(uint8);
-				*data = dhdpcie_bus_rtcm8(bus, address);
-			}
-
-			/* Adjust for next transfer (if any) */
-			if ((size -= dsize) > 0) {
-				data += dsize;
-				address += dsize;
-			}
-		}
+	while (size >= dsize) {
+		if (write)
+			dhdpcie_bus_wtcm64(bus, address, *((uint64 *)data));
+		else
+			*(uint64 *)data = dhdpcie_bus_rtcm64(bus, address);
+		size -= dsize;
+		data += dsize;
+		address += dsize;
 	}
+#endif /* DHD_SUPPORT_64BIT */
+
+	dsize = sizeof(uint32);
+	while (size >= dsize) {
+		if (write)
+			dhdpcie_bus_wtcm32(bus, address, *((uint32 *)data));
+		else
+			*(uint32 *)data = dhdpcie_bus_rtcm32(bus, address);
+		size -= dsize;
+		data += dsize;
+		address += dsize;
+	}
+
+	/* Handle unaligned end */
+	dsize = sizeof(uint8);
+	while (size) {
+		if (write)
+			dhdpcie_bus_wtcm8(bus, address, *data);
+		else
+			*data = dhdpcie_bus_rtcm8(bus, address);
+		size -= dsize;
+		data += dsize;
+		address += dsize;
+	}
+
+done:
 	if (MULTIBP_ENAB(bus->sih)) {
 		dhd_bus_pcie_pwr_req_clear(bus);
 	}
@@ -13370,7 +13371,7 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 
 	/* First check if there a FW trap */
 	if ((bus->api.fw_rev >= PCIE_SHARED_VERSION_6) &&
-		(bus->dhd->dongle_trap_data = dhd_prot_process_trapbuf(bus->dhd))) {
+	    (bus->dhd->dongle_trap_data = dhd_prot_process_trapbuf(bus->dhd))) {
 #ifdef DNGL_AXI_ERROR_LOGGING
 		if (bus->dhd->axi_error) {
 			DHD_ERROR(("AXI Error happened\n"));
@@ -13382,65 +13383,77 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 	}
 
 	if (dhd_query_bus_erros(bus->dhd)) {
-		DHD_ERROR(("%s: detected bus errors. Hence donot process msg rings\n",
+		DHD_ERROR((
+			"%s: detected bus errors. Hence donot process msg rings\n",
 			__FUNCTION__));
 		return FALSE;
 	}
 #ifdef DHD_DMA_INDICES_SEQNUM
 	dhd_prot_save_dmaidx(bus->dhd);
 #endif /* DHD_DMA_INDICES_SEQNUM */
-	/* There may be frames in both ctrl buf and data buf; check ctrl buf first */
+
+		/*
+		 * The order of processing is critical for performance.
+		 * 1. Process completions (control, tx, rx) first to free up resources.
+		 * 2. Submit new transmit work.
+		 * 3. Handle low-priority logs last.
+		 * This prevents the TX pipeline from stalling because completion rings
+		 * haven't been processed yet.
+		 */
+
+	/* 1a. Process high-priority control completions. */
 	more |= dhd_prot_process_ctrlbuf(bus->dhd, &ctrlcpl_items);
 	bus->last_process_ctrlbuf_time = OSL_LOCALTIME_NS();
-
 	bus->ctrl_cpl_post_time_usec =
-		(bus->last_process_ctrlbuf_time - read_frames_entry_time) / NSEC_PER_USEC;
+		(bus->last_process_ctrlbuf_time - read_frames_entry_time) /
+		NSEC_PER_USEC;
 	dhd_histo_update(bus->dhd, bus->ctrl_cpl_post_time_histo,
-		(uint32)bus->ctrl_cpl_post_time_usec);
+			 (uint32)bus->ctrl_cpl_post_time_usec);
 
-	/* Do not process rest of ring buf once bus enters low power state (D3_INFORM/D3_ACK) */
+	/* Do not process rest of rings if bus enters low power state */
 	if (DHD_CHK_BUS_IN_LPS(bus)) {
-		DHD_RPM(("%s: Bus is in power save state (%d). "
-			"Skip processing rest of ring buffers.\n",
+		DHD_RPM((
+			"%s: Bus in power save (%d). Skip processing rest of rings.\n",
 			__FUNCTION__, bus->bus_low_power_state));
 		return more;
 	}
 
-	/* update the flow ring cpls */
+	/* 1b. Process TX completions to free up transmit resources. */
+	more |= dhd_prot_process_msgbuf_txcpl(bus->dhd, DHD_REGULAR_RING,
+					      &txcpl_items);
+	bus->last_process_txcpl_time = OSL_LOCALTIME_NS();
+	bus->tx_cpl_time_usec = (bus->last_process_txcpl_time -
+				 bus->last_process_ctrlbuf_time) /
+				NSEC_PER_USEC;
+	dhd_histo_update(bus->dhd, bus->tx_cpl_time_histo,
+			 (uint32)bus->tx_cpl_time_usec);
+
+	/* 1c. Process RX completions (main data receive path). */
+	more |= dhd_prot_process_msgbuf_rxcpl(bus->dhd, DHD_REGULAR_RING,
+					      &rxcpl_items);
+	bus->last_process_rxcpl_time = OSL_LOCALTIME_NS();
+	bus->rx_cpl_post_time_usec =
+		(bus->last_process_rxcpl_time - bus->last_process_txcpl_time) /
+		NSEC_PER_USEC;
+	dhd_histo_update(bus->dhd, bus->rx_cpl_post_time_histo,
+			 (uint32)bus->rx_cpl_post_time_usec);
+
+	/* 2. Now that resources are free, push any pending TX packets. */
 	more |= dhd_update_txflowrings(bus->dhd);
 	bus->last_process_flowring_time = OSL_LOCALTIME_NS();
+	bus->tx_post_time_usec = (bus->last_process_flowring_time -
+				  bus->last_process_rxcpl_time) /
+				 NSEC_PER_USEC;
+	dhd_histo_update(bus->dhd, bus->tx_post_time_histo,
+			 (uint32)bus->tx_post_time_usec);
 
-	bus->tx_post_time_usec =
-		(bus->last_process_flowring_time - bus->last_process_ctrlbuf_time) / NSEC_PER_USEC;
-	dhd_histo_update(bus->dhd, bus->tx_post_time_histo, (uint32)bus->tx_post_time_usec);
-
-	/* With heavy TX traffic, we could get a lot of TxStatus
-	 * so add bound
-	 */
-	more |= dhd_prot_process_msgbuf_txcpl(bus->dhd, DHD_REGULAR_RING, &txcpl_items);
-	bus->last_process_txcpl_time = OSL_LOCALTIME_NS();
-
-	bus->tx_cpl_time_usec =
-		(bus->last_process_txcpl_time - bus->last_process_flowring_time) / NSEC_PER_USEC;
-	dhd_histo_update(bus->dhd, bus->tx_cpl_time_histo, (uint32)bus->tx_cpl_time_usec);
-
-	/* With heavy RX traffic, this routine potentially could spend some time
-	 * processing RX frames without RX bound
-	 */
-	more |= dhd_prot_process_msgbuf_rxcpl(bus->dhd, DHD_REGULAR_RING, &rxcpl_items);
-	bus->last_process_rxcpl_time = OSL_LOCALTIME_NS();
-
-	bus->rx_cpl_post_time_usec =
-		(bus->last_process_rxcpl_time - bus->last_process_txcpl_time) / NSEC_PER_USEC;
-	dhd_histo_update(bus->dhd, bus->rx_cpl_post_time_histo, (uint32)bus->rx_cpl_post_time_usec);
-
-	/* Process info ring completion messages */
+/* 3. Handle lower-priority event logs. */
 #ifdef EWP_EDL
 	if (!bus->dhd->dongle_edl_support)
 #endif
 	{
-		more |= dhd_prot_process_msgbuf_infocpl(bus->dhd, DHD_INFORING_BOUND,
-			&evtlog_items);
+		more |= dhd_prot_process_msgbuf_infocpl(
+			bus->dhd, DHD_INFORING_BOUND, &evtlog_items);
 		bus->last_process_infocpl_time = OSL_LOCALTIME_NS();
 	}
 #ifdef EWP_EDL
@@ -13451,13 +13464,11 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 #endif /* EWP_EDL */
 
 #ifdef BTLOG
-	/* Process info ring completion messages */
 	more |= dhd_prot_process_msgbuf_btlogcpl(bus->dhd, DHD_BTLOGRING_BOUND);
-#endif	/* BTLOG */
+#endif /* BTLOG */
 
 #ifdef IDLE_TX_FLOW_MGMT
 	if (bus->enable_idle_flowring_mgmt) {
-		/* Look for idle flow rings */
 		dhd_bus_check_idle_scan(bus);
 	}
 #endif /* IDLE_TX_FLOW_MGMT */
@@ -13468,19 +13479,18 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 	}
 
 #ifdef SUPPORT_LINKDOWN_RECOVERY
-	/* XXX : It seems that linkdown is occurred without notification,
-	 *       In case read shared memory failed, recovery hang is needed
-	 */
 	if (bus->read_shm_fail) {
-		/* Read interrupt state once again to confirm linkdown */
 		int intstatus = si_corereg(bus->sih, bus->sih->buscoreidx,
-			bus->pcie_mailbox_int, 0, 0);
+					   bus->pcie_mailbox_int, 0, 0);
 		if (intstatus != (uint32)-1) {
-			DHD_ERROR(("%s: read SHM failed but intstatus is valid\n", __FUNCTION__));
+			DHD_ERROR(
+				("%s: read SHM failed but intstatus is valid\n",
+				 __FUNCTION__));
 #ifdef DHD_FW_COREDUMP
 			if (bus->dhd->memdump_enabled) {
 				DHD_OS_WAKE_LOCK(bus->dhd);
-				bus->dhd->memdump_type = DUMP_TYPE_READ_SHM_FAIL;
+				bus->dhd->memdump_type =
+					DUMP_TYPE_READ_SHM_FAIL;
 				dhd_bus_mem_dump(bus->dhd);
 				DHD_OS_WAKE_UNLOCK(bus->dhd);
 			}
@@ -13493,11 +13503,6 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 			bus->is_linkdown = 1;
 		}
 
-		/* XXX The dhd_prot_debug_info_print() function *has* to be
-		 * invoked only if the bus->is_linkdown is updated so that
-		 * host doesn't need to read any pcie registers if
-		 * PCIe link is down.
-		 */
 		dhd_prot_debug_info_print(bus->dhd);
 		bus->dhd->hang_reason = HANG_REASON_PCIE_LINK_DOWN_EP_DETECT;
 #ifdef WL_CFGVENDOR_SEND_HANG_EVENT
@@ -13512,19 +13517,14 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 #endif /* DHD_H2D_LOG_TIME_SYNC */
 
 #if defined(DHD_WAKE_STATUS)
-	/* Check if host was woken up by any packets */
 	if (dhd_bus_get_bus_wake(bus->dhd) > 0) {
-		/*
-		 * If wake is due to Rx packets,
-		 * pktwake info will be printed and cleared from dhd_rx_frame()
-		 */
-		DHD_ERROR(("#### dhdpcie_host_wake: rxcpl:%d ctrlcpl:%d txcpl:%d evtlog:%d ####\n",
+		DHD_ERROR((
+			"#### dhdpcie_host_wake: rxcpl:%d ctrlcpl:%d txcpl:%d evtlog:%d ####\n",
 			rxcpl_items, ctrlcpl_items, txcpl_items, evtlog_items));
 
 		dhd_bus_set_get_bus_wake(bus->dhd, 0);
 
 		if (rxcpl_items > 0) {
-			/* Request packet dump for first Rx packet */
 			dhd_bus_set_get_bus_wake_pkt_dump(bus->dhd, 1);
 		}
 	}
