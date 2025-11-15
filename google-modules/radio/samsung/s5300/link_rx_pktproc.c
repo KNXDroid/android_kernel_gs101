@@ -606,33 +606,28 @@ static struct sk_buff *cpif_build_skb_single(struct pktproc_queue *q, u8 *src, u
 		u16 front_pad_size, u16 rear_pad_size, int *buffer_count)
 {
 	struct sk_buff *skb;
+	unsigned int frag_size;
 
 #if IS_ENABLED(CONFIG_EXYNOS_CPIF_NETRX_MGR)
-	if (q->manager) {
-		skb = build_skb(src - front_pad_size, q->manager->frag_size);
-		if (unlikely(!skb))
-			goto error;
-
-		skb_reserve(skb, front_pad_size);
-	} else
-#endif
-	{
-#if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_IOMMU)
-		skb = build_skb(src - front_pad_size, q->ppa->true_packet_size);
-		if (unlikely(!skb))
-			goto error;
-
-		skb_reserve(skb, front_pad_size);
+	if (q->manager)
+		frag_size = q->manager->frag_size;
+	else
+		frag_size = q->ppa->true_packet_size;
 #else
-		skb = napi_alloc_skb(q->napi_ptr, len);
-		if (unlikely(!skb))
-			goto error;
-
-		skb_copy_to_linear_data(skb, src, len);
+	frag_size = q->ppa->true_packet_size;
 #endif
-	}
 
+	/* Wrap an skb around the existing DMA buffer instead of allocating a new one. */
+	skb = build_skb(src - front_pad_size, frag_size);
+	if (unlikely(!skb))
+		goto error;
+
+	/* Reserve the headroom where our packet data doesn't start. */
+	skb_reserve(skb, front_pad_size);
+
+	/* Set the actual length of the packet data. */
 	skb_put(skb, len);
+
 	*buffer_count += 1;
 	q->done_ptr = circ_new_ptr(q->num_desc, q->done_ptr, 1);
 
