@@ -1732,7 +1732,7 @@ static int s5100_poweroff_pcie(struct modem_ctl *mc, bool force_off)
 		spin_lock_irqsave(&mc->pcie_tx_lock, flags);
 		/* wait Tx done if it is running */
 		spin_unlock_irqrestore(&mc->pcie_tx_lock, flags);
-		msleep(30);
+		msleep_interruptible(30);
 		if (check_mem_link_tx_pending(mld) ||
 		    mif_gpio_get_value(&mc->cp_gpio[CP_GPIO_CP2AP_WAKEUP],
 				       true) == 1) {
@@ -1894,6 +1894,8 @@ int s5100_poweron_pcie(struct modem_ctl *mc, bool boot_on)
 
 	if (mc->s51xx_pdev != NULL) {
 		s51xx_pcie_restore_state(mc->s51xx_pdev, boot_on);
+
+		s51xx_pcie_l1ss_ctrl(1, mc->pcie_ch_num);
 
 		/* DBG: check MSI sfr setting values */
 		print_msi_register(mc->s51xx_pdev);
@@ -2375,7 +2377,8 @@ int s5100_init_modemctl_device(struct modem_ctl *mc, struct modem_data *pdata)
 		}
 	}
 
-	mc->wakeup_wq = create_singlethread_workqueue("cp2ap_wakeup_wq");
+	mc->wakeup_wq = alloc_workqueue("cp2ap_wakeup_wq",
+					WQ_UNBOUND | WQ_POWER_EFFICIENT, 1);
 	if (!mc->wakeup_wq) {
 		mif_err("%s: ERR! fail to create wakeup_wq\n", mc->name);
 		ret = -EINVAL;
@@ -2384,7 +2387,8 @@ int s5100_init_modemctl_device(struct modem_ctl *mc, struct modem_data *pdata)
 	INIT_WORK(&mc->wakeup_work, cp2ap_wakeup_work);
 	INIT_WORK(&mc->suspend_work, cp2ap_suspend_work);
 
-	mc->crash_wq = create_singlethread_workqueue("trigger_cp_crash_wq");
+	mc->crash_wq = alloc_workqueue("trigger_cp_crash_wq",
+				       WQ_UNBOUND | WQ_POWER_EFFICIENT, 1);
 	if (!mc->crash_wq) {
 		mif_err("%s: ERR! fail to create crash_wq\n", mc->name);
 		ret = -EINVAL;
