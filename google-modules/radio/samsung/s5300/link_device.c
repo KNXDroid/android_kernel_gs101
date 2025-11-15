@@ -834,10 +834,19 @@ static enum hrtimer_restart tx_timer_func(struct hrtimer *timer)
 	need_schedule = false;
 	mask = 0;
 
-	spin_lock_irqsave(&mc->lock, flags);
-	if (unlikely(!ipc_active(mld)))
-		goto exit;
+	/*
+	 * Use fine-grained locking.
+	 */
 
+	/* 1. Lock -> Check -> Unlock */
+	spin_lock_irqsave(&mc->lock, flags);
+	if (unlikely(!ipc_active(mld))) {
+		spin_unlock_irqrestore(&mc->lock, flags);
+		goto exit_schedule;
+	}
+	spin_unlock_irqrestore(&mc->lock, flags);
+
+	/* 2. Do the main work without holding the lock. */
 	for (i = 0; i < IPC_MAP_MAX; i++) {
 		struct legacy_ipc_device *dev = mld->legacy_link_dev.dev[i];
 		int ret;
@@ -853,17 +862,13 @@ static enum hrtimer_restart tx_timer_func(struct hrtimer *timer)
 			if (ret == -EBUSY || ret == -ENOSPC) {
 				need_schedule = true;
 				txq_stop(mld, dev);
-				/* If txq has 2 or more packet and 2nd packet
-				 * has -ENOSPC return, It request irq to consume
-				 * the TX ring-buffer from CP
-				 */
 				mask |= msg_mask(dev);
 				continue;
 			} else {
 				link_trigger_cp_crash(mld, CRASH_REASON_MIF_TX_ERR,
-					"tx_frames_to_dev error");
+									  "tx_frames_to_dev error");
 				need_schedule = false;
-				goto exit;
+				goto exit_schedule;
 			}
 		}
 
@@ -874,16 +879,20 @@ static enum hrtimer_restart tx_timer_func(struct hrtimer *timer)
 			need_schedule = true;
 	}
 
-	if (mask)
-		send_ipc_irq(mld, mask2int(mask));
+	/* 3. If needed, Lock -> Check -> Send IRQ -> Unlock. */
+	if (mask) {
+		spin_lock_irqsave(&mc->lock, flags);
+		if (ipc_active(mld))
+			send_ipc_irq(mld, mask2int(mask));
+		spin_unlock_irqrestore(&mc->lock, flags);
+	}
 
-exit:
+	exit_schedule:
 	if (need_schedule) {
 		ktime_t ktime = ktime_set(0, mld->tx_period_ns);
 
 		hrtimer_start(timer, ktime, HRTIMER_MODE_REL);
 	}
-	spin_unlock_irqrestore(&mc->lock, flags);
 
 	return HRTIMER_NORESTART;
 }
