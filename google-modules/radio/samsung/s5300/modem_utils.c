@@ -37,9 +37,9 @@
 #include "modem_utils.h"
 #include "cpif_version.h"
 
-#define TX_SEPARATOR	"cpif: >>>>>>>>>> Outgoing packet\n"
-#define RX_SEPARATOR	"cpif: Incoming packet <<<<<<<<<<\n"
-#define LINE_SEPARATOR	\
+#define TX_SEPARATOR "cpif: >>>>>>>>>> Outgoing packet\n"
+#define RX_SEPARATOR "cpif: Incoming packet <<<<<<<<<<\n"
+#define LINE_SEPARATOR \
 	"cpif: ------------------------------------------------------------\n"
 #define PRINT_BUFF_SIZE 4096
 
@@ -56,9 +56,10 @@ enum bit_debug_flags {
 	DEBUG_FLAG_ALL
 };
 
-#define DEBUG_FLAG_DEFAULT    (1 << DEBUG_FLAG_FMT | 1 << DEBUG_FLAG_MISC)
+#define DEBUG_FLAG_DEFAULT (1 << DEBUG_FLAG_FMT | 1 << DEBUG_FLAG_MISC)
 #ifdef DEBUG_MODEM_IF_PS_DATA
-static unsigned long dflags = (DEBUG_FLAG_DEFAULT | 1 << DEBUG_FLAG_RFS | 1 << DEBUG_FLAG_PS);
+static unsigned long dflags =
+	(DEBUG_FLAG_DEFAULT | 1 << DEBUG_FLAG_RFS | 1 << DEBUG_FLAG_PS);
 #else
 static unsigned long dflags = (DEBUG_FLAG_DEFAULT);
 #endif
@@ -66,7 +67,7 @@ module_param(dflags, ulong, 0664);
 MODULE_PARM_DESC(dflags, "modem_v1 debug flags");
 
 static unsigned long wakeup_dflags =
-		(DEBUG_FLAG_DEFAULT | 1 << DEBUG_FLAG_RFS | 1 << DEBUG_FLAG_PS);
+	(DEBUG_FLAG_DEFAULT | 1 << DEBUG_FLAG_RFS | 1 << DEBUG_FLAG_PS);
 module_param(wakeup_dflags, ulong, 0664);
 MODULE_PARM_DESC(wakeup_dflags, "modem_v1 wakeup debug flags");
 
@@ -126,7 +127,7 @@ void mif_pkt(u8 ch, const char *tag, struct sk_buff *skb)
 
 /* print buffer as hex string */
 int pr_buffer(const char *tag, const char *data, size_t data_len,
-							size_t max_len)
+	      size_t max_len)
 {
 	size_t len = min(data_len, max_len);
 	unsigned char str[PR_BUFFER_SIZE * 3]; /* 1 <= sizeof <= max_len*3 */
@@ -137,12 +138,11 @@ int pr_buffer(const char *tag, const char *data, size_t data_len,
 	dump2hex(str, (len ? len * 3 : 1), data, len);
 
 	/* don't change this printk to mif_debug for print this as level7 */
-	return pr_info("%s: %s(%ld): %s%s\n", MIF_TAG, tag, (long)data_len,
-			str, (len == data_len) ? "" : " ...");
+	return pr_info("%s: %s(%ld): %s%s\n", MIF_TAG, tag, (long)data_len, str,
+		       (len == data_len) ? "" : " ...");
 }
 
-struct io_device *get_iod_with_format(struct modem_shared *msd,
-			u32 format)
+struct io_device *get_iod_with_format(struct modem_shared *msd, u32 format)
 {
 	struct rb_node *n = msd->iodevs_tree_fmt.rb_node;
 
@@ -171,8 +171,8 @@ void insert_iod_with_channel(struct modem_shared *msd, unsigned int channel,
 	msd->num_channels++;
 }
 
-struct io_device *insert_iod_with_format(struct modem_shared *msd,
-		u32 format, struct io_device *iod)
+struct io_device *insert_iod_with_format(struct modem_shared *msd, u32 format,
+					 struct io_device *iod)
 {
 	struct rb_node **p = &msd->iodevs_tree_fmt.rb_node;
 	struct rb_node *parent = NULL;
@@ -214,8 +214,7 @@ static void netif_tx_flowctl(struct modem_shared *msd, bool tx_stop)
 
 #ifdef DEBUG_MODEM_IF_FLOW_CTRL
 		mif_err("tx_stop:%s, iod->ndev->name:%s\n",
-			tx_stop ? "suspend" : "resume",
-			iod->ndev->name);
+			tx_stop ? "suspend" : "resume", iod->ndev->name);
 #endif
 	}
 	spin_unlock(&msd->active_list_lock);
@@ -229,8 +228,9 @@ bool stop_net_ifaces(struct link_device *ld, unsigned long set_mask)
 		cpif_set_bit(ld->tx_flowctrl_mask, set_mask);
 
 	if (!atomic_read(&ld->netif_stopped)) {
-		mif_info_limited("tx queue stopped: tx_flowctrl=%#04lx(set_bit:%lu)\n",
-			 ld->tx_flowctrl_mask, set_mask);
+		mif_info_limited(
+			"tx queue stopped: tx_flowctrl=%#04lx(set_bit:%lu)\n",
+			ld->tx_flowctrl_mask, set_mask);
 
 		netif_tx_flowctl(ld->msd, true);
 		atomic_set(&ld->netif_stopped, 1);
@@ -245,8 +245,9 @@ void resume_net_ifaces(struct link_device *ld, unsigned long clear_mask)
 	cpif_clear_bit(ld->tx_flowctrl_mask, clear_mask);
 
 	if (!ld->tx_flowctrl_mask && atomic_read(&ld->netif_stopped)) {
-		mif_info_limited("tx queue resumed: tx_flowctrl=%#04lx(clear_bit:%lu)\n",
-			 ld->tx_flowctrl_mask, clear_mask);
+		mif_info_limited(
+			"tx queue resumed: tx_flowctrl=%#04lx(clear_bit:%lu)\n",
+			ld->tx_flowctrl_mask, clear_mask);
 
 		netif_tx_flowctl(ld->msd, false);
 		atomic_set(&ld->netif_stopped, 0);
@@ -278,7 +279,7 @@ __be32 ipv4str_to_be32(const char *ipv4str, size_t count)
 }
 
 void mif_add_timer(struct timer_list *timer, unsigned long expire,
-			void (*function)(struct timer_list *))
+		   void (*function)(struct timer_list *))
 {
 	if (timer_pending(timer))
 		return;
@@ -294,9 +295,11 @@ static int strcat_tcp_header(char *buff, unsigned int maxlen, const u8 *pkt)
 {
 	struct tcphdr *tcph = (struct tcphdr *)pkt;
 	int eol, count = 0;
-	char flag_str[48] = {0, };
+	char flag_str[48] = {
+		0,
+	};
 
-/*
+	/*
  * -------------------------------------------------------------------------
 
 				TCP Header Format
@@ -325,13 +328,13 @@ static int strcat_tcp_header(char *buff, unsigned int maxlen, const u8 *pkt)
 */
 
 	count += scnprintf(buff + count, maxlen - count,
-		"%s: TCP:: Src.Port %u, Dst.Port %u\n",
-		MIF_TAG, ntohs(tcph->source), ntohs(tcph->dest));
+			   "%s: TCP:: Src.Port %u, Dst.Port %u\n", MIF_TAG,
+			   ntohs(tcph->source), ntohs(tcph->dest));
 
 	count += scnprintf(buff + count, maxlen - count,
-		"%s: TCP:: SEQ %#08X(%u), ACK %#08X(%u)\n",
-		MIF_TAG, ntohs(tcph->seq), ntohs(tcph->seq),
-		ntohs(tcph->ack_seq), ntohs(tcph->ack_seq));
+			   "%s: TCP:: SEQ %#08X(%u), ACK %#08X(%u)\n", MIF_TAG,
+			   ntohs(tcph->seq), ntohs(tcph->seq),
+			   ntohs(tcph->ack_seq), ntohs(tcph->ack_seq));
 
 	if (tcph->cwr)
 		strlcat(flag_str, "CWR ", sizeof(flag_str));
@@ -353,11 +356,12 @@ static int strcat_tcp_header(char *buff, unsigned int maxlen, const u8 *pkt)
 	if (eol > 0)
 		flag_str[eol] = 0;
 	count += scnprintf(buff + count, maxlen - count,
-			"%s: TCP:: Flags {%s}\n", MIF_TAG, flag_str);
+			   "%s: TCP:: Flags {%s}\n", MIF_TAG, flag_str);
 
 	count += scnprintf(buff + count, maxlen - count,
-		"%s: TCP:: Window %u, Checksum %#04X, Urgent %u\n", MIF_TAG,
-		ntohs(tcph->window), ntohs(tcph->check), ntohs(tcph->urg_ptr));
+			   "%s: TCP:: Window %u, Checksum %#04X, Urgent %u\n",
+			   MIF_TAG, ntohs(tcph->window), ntohs(tcph->check),
+			   ntohs(tcph->urg_ptr));
 
 	return count;
 }
@@ -367,7 +371,7 @@ static int strcat_udp_header(char *buff, unsigned int maxlen, const u8 *pkt)
 	struct udphdr *udph = (struct udphdr *)pkt;
 	int count = 0;
 
-/*
+	/*
  * -------------------------------------------------------------------------
 
 				UDP Header Format
@@ -384,21 +388,21 @@ static int strcat_udp_header(char *buff, unsigned int maxlen, const u8 *pkt)
 */
 
 	count += scnprintf(buff + count, maxlen - count,
-		"%s: UDP:: Src.Port %u, Dst.Port %u\n",
-		MIF_TAG, ntohs(udph->source), ntohs(udph->dest));
+			   "%s: UDP:: Src.Port %u, Dst.Port %u\n", MIF_TAG,
+			   ntohs(udph->source), ntohs(udph->dest));
 
 	count += scnprintf(buff + count, maxlen - count,
-		"%s: UDP:: Length %u, Checksum %#04X\n",
-		MIF_TAG, ntohs(udph->len), ntohs(udph->check));
+			   "%s: UDP:: Length %u, Checksum %#04X\n", MIF_TAG,
+			   ntohs(udph->len), ntohs(udph->check));
 
 	if (ntohs(udph->dest) == 53) {
 		count += scnprintf(buff + count, maxlen - count,
-				"%s: UDP:: DNS query!!!\n", MIF_TAG);
+				   "%s: UDP:: DNS query!!!\n", MIF_TAG);
 	}
 
 	if (ntohs(udph->source) == 53) {
 		count += scnprintf(buff + count, maxlen - count,
-				"%s: UDP:: DNS response!!!\n", MIF_TAG);
+				   "%s: UDP:: DNS response!!!\n", MIF_TAG);
 	}
 
 	return count;
@@ -412,9 +416,11 @@ void print_ipv4_packet(const u8 *ip_pkt, enum direction dir)
 	u16 flags = (ntohs(iph->frag_off) & 0xE000);
 	u16 frag_off = (ntohs(iph->frag_off) & 0x1FFF);
 	int eol, count = 0;
-	char flag_str[16] = {0, };
+	char flag_str[16] = {
+		0,
+	};
 
-/*
+	/*
  * ---------------------------------------------------------------------------
 				IPv4 Header Format
 
@@ -457,14 +463,15 @@ void print_ipv4_packet(const u8 *ip_pkt, enum direction dir)
 		pr_err(RX_SEPARATOR);
 	pr_err(LINE_SEPARATOR);
 
-	count += scnprintf(buff + count, PRINT_BUFF_SIZE - count,
+	count += scnprintf(
+		buff + count, PRINT_BUFF_SIZE - count,
 		"%s: IP4:: Version %u, Header Length %u, TOS %u, Length %u\n",
 		MIF_TAG, iph->version, (iph->ihl << 2), iph->tos,
 		ntohs(iph->tot_len));
 
 	count += scnprintf(buff + count, PRINT_BUFF_SIZE - count,
-			"%s: IP4:: ID %u, Fragment Offset %u\n", MIF_TAG,
-			ntohs(iph->id), frag_off);
+			   "%s: IP4:: ID %u, Fragment Offset %u\n", MIF_TAG,
+			   ntohs(iph->id), frag_off);
 
 	if (flags & IP_CE)
 		strlcat(flag_str, "CE ", sizeof(flag_str));
@@ -476,25 +483,26 @@ void print_ipv4_packet(const u8 *ip_pkt, enum direction dir)
 	if (eol > 0)
 		flag_str[eol] = 0;
 	count += scnprintf(buff + count, PRINT_BUFF_SIZE - count,
-			"%s: IP4:: Flags {%s}\n", MIF_TAG, flag_str);
+			   "%s: IP4:: Flags {%s}\n", MIF_TAG, flag_str);
 
-	count += scnprintf(buff + count, PRINT_BUFF_SIZE - count,
+	count += scnprintf(
+		buff + count, PRINT_BUFF_SIZE - count,
 		"%s: IP4:: TTL %u, Protocol %u, Header Checksum %#04X\n",
 		MIF_TAG, iph->ttl, iph->protocol, ntohs(iph->check));
 
 	count += scnprintf(buff + count, PRINT_BUFF_SIZE - count,
-		"%s: IP4:: Src.IP %pI4, Dst.IP %pI4\n",
-		MIF_TAG, &ip_pkt[12], &ip_pkt[16]);
+			   "%s: IP4:: Src.IP %pI4, Dst.IP %pI4\n", MIF_TAG,
+			   &ip_pkt[12], &ip_pkt[16]);
 
 	switch (iph->protocol) {
 	case 6: /* TCP */
 		count += strcat_tcp_header(buff + count,
-				PRINT_BUFF_SIZE - count, pkt);
+					   PRINT_BUFF_SIZE - count, pkt);
 		break;
 
 	case 17: /* UDP */
 		count += strcat_udp_header(buff + count,
-				PRINT_BUFF_SIZE - count, pkt);
+					   PRINT_BUFF_SIZE - count, pkt);
 		break;
 
 	default:
@@ -532,8 +540,8 @@ int mif_request_irq(struct modem_irq *irq, irq_handler_t isr, void *data)
 	irq->active = true;
 	irq->registered = true;
 
-	mif_info("%s(#%d) handler registered (flags:%#08lX)\n",
-		irq->name, irq->num, irq->flags);
+	mif_info("%s(#%d) handler registered (flags:%#08lX)\n", irq->name,
+		 irq->num, irq->flags);
 
 	return 0;
 }
@@ -541,8 +549,8 @@ int mif_request_irq(struct modem_irq *irq, irq_handler_t isr, void *data)
 void mif_free_irq(struct modem_irq *irq, void *data)
 {
 	free_irq(irq->num, data);
-	mif_info("%s(#%d) handler unregistered (flags:%#08lX)\n",
-		irq->name, irq->num, irq->flags);
+	mif_info("%s(#%d) handler unregistered (flags:%#08lX)\n", irq->name,
+		 irq->num, irq->flags);
 }
 
 void mif_enable_irq(struct modem_irq *irq)
@@ -555,7 +563,8 @@ void mif_enable_irq(struct modem_irq *irq)
 	spin_lock_irqsave(&irq->lock, flags);
 
 	if (irq->active) {
-		mif_err("%s(#%d) is already active <%ps>\n", irq->name, irq->num, CALLER);
+		mif_err("%s(#%d) is already active <%ps>\n", irq->name,
+			irq->num, CALLER);
 		goto exit;
 	}
 
@@ -587,7 +596,8 @@ void mif_disable_irq(struct modem_irq *irq)
 	spin_lock_irqsave(&irq->lock, flags);
 
 	if (!irq->active) {
-		mif_info("%s(#%d) is not active <%ps>\n", irq->name, irq->num, CALLER);
+		mif_info("%s(#%d) is not active <%ps>\n", irq->name, irq->num,
+			 CALLER);
 		goto exit;
 	}
 
@@ -609,7 +619,8 @@ exit:
 	spin_unlock_irqrestore(&irq->lock, flags);
 }
 
-bool mif_gpio_set_value(struct cpif_gpio *gpio, int value, unsigned int delay_ms)
+bool mif_gpio_set_value(struct cpif_gpio *gpio, int value,
+			unsigned int delay_ms)
 {
 	int dup = 0;
 
@@ -624,8 +635,10 @@ bool mif_gpio_set_value(struct cpif_gpio *gpio, int value, unsigned int delay_ms
 	/* set gpio even if it is set already */
 	gpio_set_value(gpio->num, value);
 
-	if (!strcmp(gpio->label, "AP2CP_PM_WRST_N") || !strcmp(gpio->label, "AP2CP_CP_WRST_N"))
-		mif_info("SET GPIO %s = %d (wait %dms, dup %d)\n", gpio->label, value, delay_ms, dup);
+	if (!strcmp(gpio->label, "AP2CP_PM_WRST_N") ||
+	    !strcmp(gpio->label, "AP2CP_CP_WRST_N"))
+		mif_info("SET GPIO %s = %d (wait %dms, dup %d)\n", gpio->label,
+			 value, delay_ms, dup);
 
 	if (delay_ms > 0 && !dup)
 		mdelay(delay_ms);
@@ -673,7 +686,8 @@ const char *get_cpif_driver_version(void)
 	return &(cpif_driver_version[0]);
 }
 
-int copy_from_user_memcpy_toio(void __iomem *dst, const void __user *src, size_t count)
+int copy_from_user_memcpy_toio(void __iomem *dst, const void __user *src,
+			       size_t count)
 {
 	u8 buf[256];
 
