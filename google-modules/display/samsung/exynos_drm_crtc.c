@@ -44,6 +44,8 @@ enum crtc_active_state {
 	CRTC_STATE_SELF_REFRESH,
 };
 
+extern atomic_t cpu_input_boost_active;
+
 static atomic_t long_term_frame_count = ATOMIC_INIT(0);
 static ktime_t long_term_last_time;
 static u32 long_term_average_fps;
@@ -392,10 +394,14 @@ static void exynos_crtc_atomic_flush(struct drm_crtc *crtc,
 			}
 		}
 
-		if (short_term_current_fps > long_term_average_fps) {
-			atomic_set(&display_fps, short_term_current_fps);
+		if (atomic_read(&cpu_input_boost_active)) {
+			atomic_set(&display_fps, 90);
 		} else {
-			atomic_set(&display_fps, long_term_average_fps);
+			if (short_term_current_fps > long_term_average_fps) {
+				atomic_set(&display_fps, short_term_current_fps);
+			} else {
+				atomic_set(&display_fps, long_term_average_fps);
+			}
 		}
 
 	} else {
