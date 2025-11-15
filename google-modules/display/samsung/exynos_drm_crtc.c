@@ -311,44 +311,101 @@ static void exynos_crtc_atomic_begin(struct drm_crtc *crtc,
 		exynos_crtc->ops->atomic_begin(exynos_crtc, state);
 }
 
+#define LONG_TERM_MA_WINDOW 60
+#define SHORT_TERM_MA_WINDOW 6
+
 static void exynos_crtc_atomic_flush(struct drm_crtc *crtc,
-				     struct drm_atomic_state *state)
+									 struct drm_atomic_state *state)
 {
 	struct drm_crtc_state *old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
 	struct exynos_drm_crtc *exynos_crtc = to_exynos_crtc(crtc);
 
+	/* --- Buffers and counters for long-term FPS --- */
+	static ktime_t long_term_frame_times[LONG_TERM_MA_WINDOW] = { 0 };
+	static int long_term_frame_index = 0;
+	static int long_term_frame_count = 0;
+
+	/* --- Buffers and counters for short-term FPS --- */
+	static ktime_t short_term_frame_times[SHORT_TERM_MA_WINDOW] = { 0 };
+	static int short_term_frame_index = 0;
+	static int short_term_frame_count = 0;
+
 	if (crtc->state->active) {
 		ktime_t now = ktime_get();
-		s64 long_term_delta_ms = ktime_to_ms(ktime_sub(now, long_term_last_time));
-		s64 short_term_delta_ms = ktime_to_ms(ktime_sub(now, short_term_last_time));
+		u32 short_term_current_fps = 0;
 
-		atomic_inc(&long_term_frame_count);
-		atomic_inc(&short_term_frame_count);
+		long_term_frame_times[long_term_frame_index] = now;
+		long_term_frame_index = (long_term_frame_index + 1) % LONG_TERM_MA_WINDOW;
 
-		if (long_term_delta_ms >= 1000) {
-			long_term_average_fps = (atomic_read(&long_term_frame_count) * 1000)
-			/ long_term_delta_ms;
-
-			atomic_set(&long_term_frame_count, 0);
-			long_term_last_time = now;
+		if (long_term_frame_count < LONG_TERM_MA_WINDOW) {
+			long_term_frame_count++;
 		}
 
-		if (short_term_delta_ms >= 150) {
-			u32 short_term_current_fps = (atomic_read(&short_term_frame_count) * 1000)
-			/ short_term_delta_ms;
+		if (long_term_frame_count > 1) {
+			/* Get the oldest timestamp in the window */
+			ktime_t first_time;
+			s64 delta_ms;
 
-			if (short_term_current_fps > long_term_average_fps) {
-				atomic_set(&display_fps, short_term_current_fps);
+			if (long_term_frame_count == LONG_TERM_MA_WINDOW) {
+				/* The buffer is full and has wrapped, so the oldest is at the current index */
+				first_time = long_term_frame_times[long_term_frame_index];
+				delta_ms = ktime_to_ms(ktime_sub(now, first_time));
+				if (delta_ms > 0) {
+					long_term_average_fps = (u32)((LONG_TERM_MA_WINDOW - 1) * 1000) / delta_ms;
+				}
 			} else {
-				atomic_set(&display_fps, long_term_average_fps);
+				/* Calculate delta from the very first frame recorded */
+				first_time = long_term_frame_times[0];
+				delta_ms = ktime_to_ms(ktime_sub(now, first_time));
+				if (delta_ms > 0) {
+					long_term_average_fps = (u32)((long_term_frame_count - 1) * 1000) / delta_ms;
+				}
 			}
-
-			atomic_set(&short_term_frame_count, 0);
-			short_term_last_time = now;
 		}
+
+		short_term_frame_times[short_term_frame_index] = now;
+		short_term_frame_index = (short_term_frame_index + 1) % SHORT_TERM_MA_WINDOW;
+
+		if (short_term_frame_count < SHORT_TERM_MA_WINDOW) {
+			short_term_frame_count++;
+		}
+
+		if (short_term_frame_count > 1) {
+			/* Get the oldest timestamp in the window */
+			ktime_t first_time;
+			s64 delta_ms;
+
+			if (short_term_frame_count == SHORT_TERM_MA_WINDOW) {
+				/* The buffer is full and has wrapped, so the oldest is at the current index */
+				first_time = short_term_frame_times[short_term_frame_index];
+				delta_ms = ktime_to_ms(ktime_sub(now, first_time));
+				if (delta_ms > 0) {
+					short_term_current_fps = (u32)((SHORT_TERM_MA_WINDOW - 1) * 1000) / delta_ms;
+				}
+			} else {
+				/* Calculate delta from the very first frame recorded */
+				first_time = short_term_frame_times[0];
+				delta_ms = ktime_to_ms(ktime_sub(now, first_time));
+				if (delta_ms > 0) {
+					short_term_current_fps = (u32)((short_term_frame_count - 1) * 1000) / delta_ms;
+				}
+			}
+		}
+
+		if (short_term_current_fps > long_term_average_fps) {
+			atomic_set(&display_fps, short_term_current_fps);
+		} else {
+			atomic_set(&display_fps, long_term_average_fps);
+		}
+
 	} else {
 		long_term_average_fps = 0;
 		atomic_set(&display_fps, 0);
+
+		long_term_frame_count = 0;
+		long_term_frame_index = 0;
+		short_term_frame_count = 0;
+		short_term_frame_index = 0;
 	}
 
 	if (exynos_crtc->ops->atomic_flush)
