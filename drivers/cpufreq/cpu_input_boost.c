@@ -18,7 +18,7 @@
 #include <linux/workqueue.h>
 
 /*
- * 1 when any boost is active, 0 otherwise.
+ * 1 when boosting or in cooldown, 0 otherwise.
  */
 atomic_t cpu_input_boost_active = ATOMIC_INIT(0);
 EXPORT_SYMBOL(cpu_input_boost_active);
@@ -48,6 +48,7 @@ enum {
 struct boost_drv {
 	struct delayed_work input_unboost;
 	struct delayed_work max_unboost;
+	struct delayed_work flag_unboost;
 	struct notifier_block fb_notif;
 	struct freq_qos_request qos_reqs[MAX_CPU_POLICIES];
 	int num_policies;
@@ -62,24 +63,19 @@ struct boost_drv {
 static void update_cpu_boost_qos(struct boost_drv *b);
 static void input_unboost_worker(struct work_struct *work);
 static void max_unboost_worker(struct work_struct *work);
+static void flag_unboost_worker(struct work_struct *work);
 static void cpu_input_boost_init_work(struct work_struct *work);
 
 static struct boost_drv boost_drv_g __read_mostly = {
 	.input_unboost = __DELAYED_WORK_INITIALIZER(boost_drv_g.input_unboost,
-												input_unboost_worker, 0),
-												.max_unboost = __DELAYED_WORK_INITIALIZER(boost_drv_g.max_unboost,
-																						  max_unboost_worker, 0),
-																						  .init_work = __DELAYED_WORK_INITIALIZER(boost_drv_g.init_work,
-																																  cpu_input_boost_init_work, 0),
+						    input_unboost_worker, 0),
+	.max_unboost = __DELAYED_WORK_INITIALIZER(boost_drv_g.max_unboost,
+						  max_unboost_worker, 0),
+	.flag_unboost = __DELAYED_WORK_INITIALIZER(boost_drv_g.flag_unboost,
+						   flag_unboost_worker, 0),
+	.init_work = __DELAYED_WORK_INITIALIZER(boost_drv_g.init_work,
+						cpu_input_boost_init_work, 0),
 };
-
-static inline void update_boost_active_flag(struct boost_drv *b)
-{
-	if (test_bit(INPUT_BOOST, &b->state) || test_bit(MAX_BOOST, &b->state))
-		atomic_set(&cpu_input_boost_active, 1);
-	else
-		atomic_set(&cpu_input_boost_active, 0);
-}
 
 static void update_cpu_boost_qos(struct boost_drv *b)
 {
@@ -105,11 +101,6 @@ static void update_cpu_boost_qos(struct boost_drv *b)
 
 static void __cpu_input_boost_kick(struct boost_drv *b)
 {
-	/*
-	 * Cooldown / Rate-limiting logic.
-	 * Check if the cooldown period has passed since the last boost.
-	 * The time_before() macro correctly handles jiffies wraparound.
-	 */
 	if (time_before(jiffies, b->last_input_boost_jiffies +
 		msecs_to_jiffies(INPUT_BOOST_COOLDOWN_MS))) {
 		return;
@@ -122,10 +113,13 @@ static void __cpu_input_boost_kick(struct boost_drv *b)
 
 	set_bit(INPUT_BOOST, &b->state);
 	update_cpu_boost_qos(b);
-	update_boost_active_flag(b);
+	atomic_set(&cpu_input_boost_active, 1);
 
 	mod_delayed_work(system_unbound_wq, &b->input_unboost,
 					 msecs_to_jiffies(INPUT_BOOST_DURATION_MS));
+
+	mod_delayed_work(system_unbound_wq, &b->flag_unboost,
+					 msecs_to_jiffies(INPUT_BOOST_DURATION_MS + INPUT_BOOST_COOLDOWN_MS));
 }
 
 void cpu_input_boost_kick(void)
@@ -139,6 +133,7 @@ static void __cpu_input_boost_kick_max(struct boost_drv *b, unsigned int ms)
 	unsigned long curr_expires, new_expires;
 
 	if (test_bit(SCREEN_OFF, &b->state)) return;
+
 	do {
 		curr_expires = atomic_long_read(&b->max_boost_expires);
 		new_expires = jiffies + j;
@@ -147,7 +142,8 @@ static void __cpu_input_boost_kick_max(struct boost_drv *b, unsigned int ms)
 
 		set_bit(MAX_BOOST, &b->state);
 		update_cpu_boost_qos(b);
-		update_boost_active_flag(b);
+		atomic_set(&cpu_input_boost_active, 1);
+
 		mod_delayed_work(system_unbound_wq, &b->max_unboost, j);
 }
 
@@ -158,7 +154,6 @@ static void input_unboost_worker(struct work_struct *work)
 	struct boost_drv *b = container_of(to_delayed_work(work), typeof(*b), input_unboost);
 	clear_bit(INPUT_BOOST, &b->state);
 	update_cpu_boost_qos(b);
-	update_boost_active_flag(b);
 }
 
 static void max_unboost_worker(struct work_struct *work)
@@ -166,7 +161,24 @@ static void max_unboost_worker(struct work_struct *work)
 	struct boost_drv *b = container_of(to_delayed_work(work), typeof(*b), max_unboost);
 	clear_bit(MAX_BOOST, &b->state);
 	update_cpu_boost_qos(b);
-	update_boost_active_flag(b);
+
+	/*
+	 * When the max boost expires, we still might be in the input boost
+	 * cooldown period, so we check if that flag timer is pending.
+	 * If neither are active, we can clear the global flag.
+	 */
+	if (!delayed_work_pending(&b->flag_unboost))
+		atomic_set(&cpu_input_boost_active, 0);
+}
+
+static void flag_unboost_worker(struct work_struct *work)
+{
+	struct boost_drv *b = container_of(to_delayed_work(work), typeof(*b), flag_unboost);
+	/*
+	 * Only clear the global flag if a max boost isn't also active.
+	 */
+	if (!test_bit(MAX_BOOST, &b->state))
+		atomic_set(&cpu_input_boost_active, 0);
 }
 
 static int fb_notifier_cb(struct notifier_block *nb, unsigned long action, void *data)
@@ -176,6 +188,7 @@ static int fb_notifier_cb(struct notifier_block *nb, unsigned long action, void 
 	int *blank = evdata->data;
 
 	if (action != FB_EVENT_BLANK) return NOTIFY_OK;
+
 	if (*blank == FB_BLANK_UNBLANK) {
 		clear_bit(SCREEN_OFF, &b->state);
 		__cpu_input_boost_kick_max(b, wake_boost_duration);
@@ -183,10 +196,11 @@ static int fb_notifier_cb(struct notifier_block *nb, unsigned long action, void 
 		set_bit(SCREEN_OFF, &b->state);
 		cancel_delayed_work(&b->input_unboost);
 		cancel_delayed_work(&b->max_unboost);
+		cancel_delayed_work(&b->flag_unboost);
 		clear_bit(INPUT_BOOST, &b->state);
 		clear_bit(MAX_BOOST, &b->state);
 		update_cpu_boost_qos(b);
-		update_boost_active_flag(b);
+		atomic_set(&cpu_input_boost_active, 0);
 	}
 	return NOTIFY_OK;
 }
@@ -200,16 +214,21 @@ static int cpu_input_boost_input_connect(struct input_handler *handler, struct i
 {
 	struct input_handle *handle;
 	int ret;
+
 	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
 	if (!handle) return -ENOMEM;
+
 	handle->dev = dev;
 	handle->handler = handler;
 	handle->name = "cpu_input_boost_handle";
 	ret = input_register_handle(handle);
 	if (ret) goto free_handle;
+
 	ret = input_open_device(handle);
 	if (ret) goto unregister_handle;
+
 	return 0;
+
 	unregister_handle:
 	input_unregister_handle(handle);
 	free_handle:
@@ -236,8 +255,10 @@ static const struct input_device_id cpu_input_boost_ids[] = {
 };
 
 static struct input_handler cpu_input_boost_input_handler = {
-	.event = cpu_input_boost_input_event, .connect = cpu_input_boost_input_connect,
-	.disconnect = cpu_input_boost_input_disconnect, .name = "cpu_input_boost_handler",
+	.event = cpu_input_boost_input_event,
+	.connect = cpu_input_boost_input_connect,
+	.disconnect = cpu_input_boost_input_disconnect,
+	.name = "cpu_input_boost_handler",
 	.id_table = cpu_input_boost_ids,
 };
 
@@ -317,10 +338,10 @@ static void __exit cpu_input_boost_exit(void)
 	input_unregister_handler(&cpu_input_boost_input_handler);
 	cancel_delayed_work_sync(&b->input_unboost);
 	cancel_delayed_work_sync(&b->max_unboost);
+	cancel_delayed_work_sync(&b->flag_unboost);
 	for (i = 0; i < b->num_policies; i++) {
 		freq_qos_remove_request(&b->qos_reqs[i]);
 	}
-	/* Ensure the flag is cleared on exit */
 	atomic_set(&cpu_input_boost_active, 0);
 }
 module_exit(cpu_input_boost_exit);
