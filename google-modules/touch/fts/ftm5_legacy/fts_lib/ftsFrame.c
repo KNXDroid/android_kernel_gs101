@@ -78,27 +78,31 @@ int getChannelsLength(struct fts_ts_info *info)
   */
 int getFrameData(struct fts_ts_info *info, u16 address, int size, short *frame)
 {
-	int i, j, ret;
-	u8 *data = (u8 *)kmalloc(size * sizeof(u8), GFP_KERNEL);
+	int ret;
+	u8 *data =
+		(u8 *)frame; /* Treat the destination buffer as a byte array. */
 
-	if (data == NULL) {
-		dev_err(info->dev, "getFrameData: ERROR %08X\n", ERROR_ALLOC);
-		return ERROR_ALLOC;
-	}
-
+	/* Read data directly into the final destination buffer. */
 	ret = fts_writeReadU8UX(info, FTS_CMD_FRAMEBUFFER_R, BITS_16, address,
 				data, size, DUMMY_FRAMEBUFFER);
 	if (ret < OK) {
 		dev_err(info->dev, "getFrameData: ERROR %08X\n", ERROR_BUS_R);
-		kfree(data);
 		return ERROR_BUS_R;
 	}
-	j = 0;
-	for (i = 0; i < size; i += 2) {
-		frame[j] = (short)((data[i + 1] << 8) + data[i]);
-		j++;
+
+	/*
+	 * The hardware returns data in little-endian format (LSB first). The raw
+	 * I2C/SPI read places the bytes directly into the short array in the correct
+	 * order for a little-endian CPU. On a big-endian CPU, we must perform a
+	 * byte swap, which can be done efficiently.
+	 */
+#ifdef __BIG_ENDIAN
+	int i;
+	for (i = 0; i < size / 2; i++) {
+		le16_to_cpus(&frame[i]);
 	}
-	kfree(data);
+#endif
+
 	return OK;
 }
 
@@ -141,32 +145,30 @@ int getMSFrame3(struct fts_ts_info *info, MSFrameType type,
 {
 	u16 offset;
 	int ret, force_len, sense_len;
-	SysInfo systemInfo;
-	memcpy(&systemInfo, &info->systemInfo, sizeof(systemInfo));
 
 	force_len = getForceLen(info);
 	sense_len = getSenseLen(info);
 
 	frame->node_data = NULL;
 
-	dev_dbg(info->dev, "%s: Starting to get frame %02X\n", __func__,
-		 type);
+	dev_dbg(info->dev, "%s: Starting to get frame %02X\n", __func__, type);
 	switch (type) {
 	case MS_RAW:
-		offset = systemInfo.u16_msTchRawAddr;
+		offset = info->systemInfo.u16_msTchRawAddr;
 		goto LOAD_NORM;
 	case MS_FILTER:
-		offset = systemInfo.u16_msTchFilterAddr;
+		offset = info->systemInfo.u16_msTchFilterAddr;
 
 		goto LOAD_NORM;
 	case MS_STRENGTH:
-		offset = systemInfo.u16_msTchStrenAddr;
+		offset = info->systemInfo.u16_msTchStrenAddr;
 		goto LOAD_NORM;
 	case MS_BASELINE:
-		offset = systemInfo.u16_msTchBaselineAddr;
+		offset = info->systemInfo.u16_msTchBaselineAddr;
 LOAD_NORM:
 		if (force_len == 0 || sense_len == 0) {
-			dev_err(info->dev, "%s: number of channels not initialized ERROR %08X\n",
+			dev_err(info->dev,
+				"%s: number of channels not initialized ERROR %08X\n",
 				__func__, ERROR_CH_LEN);
 			return ERROR_CH_LEN | ERROR_GET_FRAME;
 		}
@@ -174,40 +176,42 @@ LOAD_NORM:
 		break;
 
 	case MS_KEY_RAW:
-		offset = systemInfo.u16_keyRawAddr;
+		offset = info->systemInfo.u16_keyRawAddr;
 		goto LOAD_KEY;
 	case MS_KEY_FILTER:
-		offset = systemInfo.u16_keyFilterAddr;
+		offset = info->systemInfo.u16_keyFilterAddr;
 		goto LOAD_KEY;
 	case MS_KEY_STRENGTH:
-		offset = systemInfo.u16_keyStrenAddr;
+		offset = info->systemInfo.u16_keyStrenAddr;
 		goto LOAD_KEY;
 	case MS_KEY_BASELINE:
-		offset = systemInfo.u16_keyBaselineAddr;
+		offset = info->systemInfo.u16_keyBaselineAddr;
 LOAD_KEY:
-		if (systemInfo.u8_keyLen == 0) {
-			dev_err(info->dev, "%s: number of channels not initialized ERROR %08X\n",
+		if (info->systemInfo.u8_keyLen == 0) {
+			dev_err(info->dev,
+				"%s: number of channels not initialized ERROR %08X\n",
 				__func__, ERROR_CH_LEN);
 			return ERROR_CH_LEN | ERROR_GET_FRAME;
 		}
 		force_len = 1;
-		sense_len = systemInfo.u8_keyLen;
+		sense_len = info->systemInfo.u8_keyLen;
 		break;
 
 	case FRC_RAW:
-		offset = systemInfo.u16_frcRawAddr;
+		offset = info->systemInfo.u16_frcRawAddr;
 		goto LOAD_FRC;
 	case FRC_FILTER:
-		offset = systemInfo.u16_frcFilterAddr;
+		offset = info->systemInfo.u16_frcFilterAddr;
 		goto LOAD_FRC;
 	case FRC_STRENGTH:
-		offset = systemInfo.u16_frcStrenAddr;
+		offset = info->systemInfo.u16_frcStrenAddr;
 		goto LOAD_FRC;
 	case FRC_BASELINE:
-		offset = systemInfo.u16_frcBaselineAddr;
+		offset = info->systemInfo.u16_frcBaselineAddr;
 LOAD_FRC:
 		if (force_len == 0) {
-			dev_err(info->dev, "%s: number of channels not initialized ERROR %08X\n",
+			dev_err(info->dev,
+				"%s: number of channels not initialized ERROR %08X\n",
 				__func__, ERROR_CH_LEN);
 			return ERROR_CH_LEN | ERROR_GET_FRAME;
 		}
@@ -215,11 +219,11 @@ LOAD_FRC:
 		break;
 	default:
 		dev_err(info->dev, "%s: Invalid type ERROR %08X\n", __func__,
-			 ERROR_OP_NOT_ALLOW | ERROR_GET_FRAME);
+			ERROR_OP_NOT_ALLOW | ERROR_GET_FRAME);
 		return ERROR_OP_NOT_ALLOW | ERROR_GET_FRAME;
 	}
 
-	frame->node_data_size = ((force_len) * sense_len);
+	frame->node_data_size = ((force_len)*sense_len);
 	frame->header.force_node = force_len;
 	frame->header.sense_node = sense_len;
 	frame->header.type = type;
@@ -227,25 +231,25 @@ LOAD_FRC:
 	dev_dbg(info->dev, "%s: Force_len = %d Sense_len = %d Offset = %04X\n",
 		__func__, force_len, sense_len, offset);
 
-	frame->node_data = (short *)kmalloc(frame->node_data_size *
-					    sizeof(short), GFP_KERNEL);
+	frame->node_data = (short *)kmalloc(
+		frame->node_data_size * sizeof(short), GFP_KERNEL);
 	if (frame->node_data == NULL) {
 		dev_err(info->dev, "%s: ERROR %08X\n", __func__,
 			ERROR_ALLOC | ERROR_GET_FRAME);
 		return ERROR_ALLOC | ERROR_GET_FRAME;
 	}
 
-	ret = getFrameData(info, offset,
-			   frame->node_data_size * BYTES_PER_NODE,
+	ret = getFrameData(info, offset, frame->node_data_size * BYTES_PER_NODE,
 			   (frame->node_data));
 	if (ret < OK) {
-		dev_err(info->dev, "%s: ERROR %08X\n", __func__, ERROR_GET_FRAME_DATA);
+		dev_err(info->dev, "%s: ERROR %08X\n", __func__,
+			ERROR_GET_FRAME_DATA);
 		kfree(frame->node_data);
 		frame->node_data = NULL;
 		return ret | ERROR_GET_FRAME_DATA | ERROR_GET_FRAME;
 	}
 	/* if you want to access one node i,j,
-	  * compute the offset like: offset = i*columns + j = > frame[i, j] */
+	 * compute the offset like: offset = i*columns + j = > frame[i, j] */
 
 	dev_dbg(info->dev, "Frame acquired!\n");
 	return frame->node_data_size;
@@ -259,24 +263,24 @@ LOAD_FRC:
   * @return > 0 if success specifying the number of node into frame or an
   * error code which specify the type of error
   */
-int getSSFrame3(struct fts_ts_info *info, SSFrameType type, SelfSenseFrame *frame)
+int getSSFrame3(struct fts_ts_info *info, SSFrameType type,
+		SelfSenseFrame *frame)
 {
 	u16 offset_force, offset_sense;
 	int ret;
-	SysInfo systemInfo;
-	memcpy(&systemInfo, &info->systemInfo, sizeof(systemInfo));
 
 	frame->force_data = NULL;
 	frame->sense_data = NULL;
 
-	frame->header.force_node = getForceLen(info);	/* use getForce/SenseLen
-							 * because introduce
-							 * a recover mechanism
-							 * in case of len =0 */
+	frame->header.force_node = getForceLen(info); /* use getForce/SenseLen
+	* because introduce
+	* a recover mechanism
+	* in case of len =0 */
 	frame->header.sense_node = getSenseLen(info);
 
 	if (frame->header.force_node == 0 || frame->header.sense_node == 0) {
-		dev_err(info->dev, "%s: number of channels not initialized ERROR %08X\n",
+		dev_err(info->dev,
+			"%s: number of channels not initialized ERROR %08X\n",
 			__func__, ERROR_CH_LEN);
 		return ERROR_CH_LEN | ERROR_GET_FRAME;
 	}
@@ -284,98 +288,98 @@ int getSSFrame3(struct fts_ts_info *info, SSFrameType type, SelfSenseFrame *fram
 	dev_dbg(info->dev, "%s: Starting to get frame %02X\n", __func__, type);
 	switch (type) {
 	case SS_RAW:
-		offset_force = systemInfo.u16_ssTchTxRawAddr;
-		offset_sense = systemInfo.u16_ssTchRxRawAddr;
+		offset_force = info->systemInfo.u16_ssTchTxRawAddr;
+		offset_sense = info->systemInfo.u16_ssTchRxRawAddr;
 		break;
 	case SS_FILTER:
-		offset_force = systemInfo.u16_ssTchTxFilterAddr;
-		offset_sense = systemInfo.u16_ssTchRxFilterAddr;
+		offset_force = info->systemInfo.u16_ssTchTxFilterAddr;
+		offset_sense = info->systemInfo.u16_ssTchRxFilterAddr;
 		break;
 	case SS_STRENGTH:
-		offset_force = systemInfo.u16_ssTchTxStrenAddr;
-		offset_sense = systemInfo.u16_ssTchRxStrenAddr;
+		offset_force = info->systemInfo.u16_ssTchTxStrenAddr;
+		offset_sense = info->systemInfo.u16_ssTchRxStrenAddr;
 		break;
 	case SS_BASELINE:
-		offset_force = systemInfo.u16_ssTchTxBaselineAddr;
-		offset_sense = systemInfo.u16_ssTchRxBaselineAddr;
+		offset_force = info->systemInfo.u16_ssTchTxBaselineAddr;
+		offset_sense = info->systemInfo.u16_ssTchRxBaselineAddr;
 		break;
 
 	case SS_HVR_RAW:
-		offset_force = systemInfo.u16_ssHvrTxRawAddr;
-		offset_sense = systemInfo.u16_ssHvrRxRawAddr;
+		offset_force = info->systemInfo.u16_ssHvrTxRawAddr;
+		offset_sense = info->systemInfo.u16_ssHvrRxRawAddr;
 		break;
 	case SS_HVR_FILTER:
-		offset_force = systemInfo.u16_ssHvrTxFilterAddr;
-		offset_sense = systemInfo.u16_ssHvrRxFilterAddr;
+		offset_force = info->systemInfo.u16_ssHvrTxFilterAddr;
+		offset_sense = info->systemInfo.u16_ssHvrRxFilterAddr;
 		break;
 	case SS_HVR_STRENGTH:
-		offset_force = systemInfo.u16_ssHvrTxStrenAddr;
-		offset_sense = systemInfo.u16_ssHvrRxStrenAddr;
+		offset_force = info->systemInfo.u16_ssHvrTxStrenAddr;
+		offset_sense = info->systemInfo.u16_ssHvrRxStrenAddr;
 		break;
 	case SS_HVR_BASELINE:
-		offset_force = systemInfo.u16_ssHvrTxBaselineAddr;
-		offset_sense = systemInfo.u16_ssHvrRxBaselineAddr;
+		offset_force = info->systemInfo.u16_ssHvrTxBaselineAddr;
+		offset_sense = info->systemInfo.u16_ssHvrRxBaselineAddr;
 		break;
 
 	case SS_PRX_RAW:
-		offset_force = systemInfo.u16_ssPrxTxRawAddr;
-		offset_sense = systemInfo.u16_ssPrxRxRawAddr;
+		offset_force = info->systemInfo.u16_ssPrxTxRawAddr;
+		offset_sense = info->systemInfo.u16_ssPrxRxRawAddr;
 		break;
 	case SS_PRX_FILTER:
-		offset_force = systemInfo.u16_ssPrxTxFilterAddr;
-		offset_sense = systemInfo.u16_ssPrxRxFilterAddr;
+		offset_force = info->systemInfo.u16_ssPrxTxFilterAddr;
+		offset_sense = info->systemInfo.u16_ssPrxRxFilterAddr;
 		break;
 	case SS_PRX_STRENGTH:
-		offset_force = systemInfo.u16_ssPrxTxStrenAddr;
-		offset_sense = systemInfo.u16_ssPrxRxStrenAddr;
+		offset_force = info->systemInfo.u16_ssPrxTxStrenAddr;
+		offset_sense = info->systemInfo.u16_ssPrxRxStrenAddr;
 		break;
 	case SS_PRX_BASELINE:
-		offset_force = systemInfo.u16_ssPrxTxBaselineAddr;
-		offset_sense = systemInfo.u16_ssPrxRxBaselineAddr;
+		offset_force = info->systemInfo.u16_ssPrxTxBaselineAddr;
+		offset_sense = info->systemInfo.u16_ssPrxRxBaselineAddr;
 		break;
 	case SS_DETECT_RAW:
-		if (systemInfo.u8_ssDetScanSet == 0) {
-			offset_force = systemInfo.u16_ssDetRawAddr;
+		if (info->systemInfo.u8_ssDetScanSet == 0) {
+			offset_force = info->systemInfo.u16_ssDetRawAddr;
 			offset_sense = 0;
 			frame->header.sense_node = 0;
 		} else {
-			offset_sense = systemInfo.u16_ssDetRawAddr;
+			offset_sense = info->systemInfo.u16_ssDetRawAddr;
 			offset_force = 0;
 			frame->header.force_node = 0;
 		}
 		break;
 
 	case SS_DETECT_FILTER:
-		if (systemInfo.u8_ssDetScanSet == 0) {
-			offset_force = systemInfo.u16_ssDetFilterAddr;
+		if (info->systemInfo.u8_ssDetScanSet == 0) {
+			offset_force = info->systemInfo.u16_ssDetFilterAddr;
 			offset_sense = 0;
 			frame->header.sense_node = 0;
 		} else {
-			offset_sense = systemInfo.u16_ssDetFilterAddr;
+			offset_sense = info->systemInfo.u16_ssDetFilterAddr;
 			offset_force = 0;
 			frame->header.force_node = 0;
 		}
 		break;
 
 	case SS_DETECT_BASELINE:
-		if (systemInfo.u8_ssDetScanSet == 0) {
-			offset_force = systemInfo.u16_ssDetBaselineAddr;
+		if (info->systemInfo.u8_ssDetScanSet == 0) {
+			offset_force = info->systemInfo.u16_ssDetBaselineAddr;
 			offset_sense = 0;
 			frame->header.sense_node = 0;
 		} else {
-			offset_sense = systemInfo.u16_ssDetBaselineAddr;
+			offset_sense = info->systemInfo.u16_ssDetBaselineAddr;
 			offset_force = 0;
 			frame->header.force_node = 0;
 		}
 		break;
 
 	case SS_DETECT_STRENGTH:
-		if (systemInfo.u8_ssDetScanSet == 0) {
-			offset_force = systemInfo.u16_ssDetStrenAddr;
+		if (info->systemInfo.u8_ssDetScanSet == 0) {
+			offset_force = info->systemInfo.u16_ssDetStrenAddr;
 			offset_sense = 0;
 			frame->header.sense_node = 0;
 		} else {
-			offset_sense = systemInfo.u16_ssDetStrenAddr;
+			offset_sense = info->systemInfo.u16_ssDetStrenAddr;
 			offset_force = 0;
 			frame->header.force_node = 0;
 		}
@@ -383,39 +387,43 @@ int getSSFrame3(struct fts_ts_info *info, SSFrameType type, SelfSenseFrame *fram
 
 	default:
 		dev_err(info->dev, "%s: Invalid type ERROR %08X\n", __func__,
-			 ERROR_OP_NOT_ALLOW | ERROR_GET_FRAME);
+			ERROR_OP_NOT_ALLOW | ERROR_GET_FRAME);
 		return ERROR_OP_NOT_ALLOW | ERROR_GET_FRAME;
 	}
 
 	frame->header.type = type;
 
-	dev_dbg(info->dev, "%s: Force_len = %d Sense_len = %d Offset_force = %04X Offset_sense = %04X\n",
-		__func__, frame->header.force_node,
-		frame->header.sense_node,
+	dev_dbg(info->dev,
+		"%s: Force_len = %d Sense_len = %d Offset_force = %04X Offset_sense = %04X\n",
+		__func__, frame->header.force_node, frame->header.sense_node,
 		offset_force, offset_sense);
 
-	frame->force_data = (short *)kmalloc(frame->header.force_node *
-					     sizeof(short), GFP_KERNEL);
+	frame->force_data = (short *)kmalloc(
+		frame->header.force_node * sizeof(short), GFP_KERNEL);
 	if (frame->force_data == NULL) {
-		dev_err(info->dev, "%s: can not allocate force_data ERROR %08X\n",
+		dev_err(info->dev,
+			"%s: can not allocate force_data ERROR %08X\n",
 			__func__, ERROR_ALLOC | ERROR_GET_FRAME);
 		return ERROR_ALLOC | ERROR_GET_FRAME;
 	}
 
-	frame->sense_data = (short *)kmalloc(frame->header.sense_node *
-					     sizeof(short), GFP_KERNEL);
+	frame->sense_data = (short *)kmalloc(
+		frame->header.sense_node * sizeof(short), GFP_KERNEL);
 	if (frame->sense_data == NULL) {
 		kfree(frame->force_data);
 		frame->force_data = NULL;
-		dev_err(info->dev, "%s: can not allocate sense_data ERROR %08X\n",
+		dev_err(info->dev,
+			"%s: can not allocate sense_data ERROR %08X\n",
 			__func__, ERROR_ALLOC | ERROR_GET_FRAME);
 		return ERROR_ALLOC | ERROR_GET_FRAME;
 	}
 
-	ret = getFrameData(info, offset_force, frame->header.force_node *
-			   BYTES_PER_NODE, (frame->force_data));
+	ret = getFrameData(info, offset_force,
+			   frame->header.force_node * BYTES_PER_NODE,
+			   (frame->force_data));
 	if (ret < OK) {
-		dev_err(info->dev, "%s: error while reading force data ERROR %08X\n",
+		dev_err(info->dev,
+			"%s: error while reading force data ERROR %08X\n",
 			__func__, ERROR_GET_FRAME_DATA);
 		kfree(frame->force_data);
 		frame->force_data = NULL;
@@ -424,10 +432,12 @@ int getSSFrame3(struct fts_ts_info *info, SSFrameType type, SelfSenseFrame *fram
 		return ret | ERROR_GET_FRAME_DATA | ERROR_GET_FRAME;
 	}
 
-	ret = getFrameData(info, offset_sense, frame->header.sense_node *
-			   BYTES_PER_NODE, (frame->sense_data));
+	ret = getFrameData(info, offset_sense,
+			   frame->header.sense_node * BYTES_PER_NODE,
+			   (frame->sense_data));
 	if (ret < OK) {
-		dev_err(info->dev, "%s: error while reading sense data ERROR %08X\n",
+		dev_err(info->dev,
+			"%s: error while reading sense data ERROR %08X\n",
 			__func__, ERROR_GET_FRAME_DATA);
 		kfree(frame->force_data);
 		frame->force_data = NULL;
@@ -436,7 +446,7 @@ int getSSFrame3(struct fts_ts_info *info, SSFrameType type, SelfSenseFrame *fram
 		return ret | ERROR_GET_FRAME_DATA | ERROR_GET_FRAME;
 	}
 	/* if you want to access one node i,j,
-	  * the offset like: offset = i*columns + j = > frame[i, j] */
+	 * the offset like: offset = i*columns + j = > frame[i, j] */
 
 	dev_dbg(info->dev, "Frame acquired!\n");
 	return frame->header.force_node + frame->header.sense_node;
