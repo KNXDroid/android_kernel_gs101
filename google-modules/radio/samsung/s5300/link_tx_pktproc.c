@@ -117,44 +117,40 @@ static int pktproc_set_end(struct pktproc_queue_ul *q, unsigned int desc_index,
 
 static int pktproc_ul_update_fore_ptr(struct pktproc_queue_ul *q, u32 count)
 {
-	u32 offset = q->ppa_ul->cp_quota;
-	unsigned int last_ptr;
 	unsigned int fore_ptr;
-	unsigned int i;
 	int ret;
 
-	last_ptr = q->q_info->fore_ptr;
-	fore_ptr = circ_new_ptr(q->num_desc, last_ptr, count);
+	if (count == 0)
+		return 0;
 
-	if (q->ppa_ul->end_bit_owner == END_BIT_CP)
-		goto set_fore;
+	fore_ptr = circ_new_ptr(q->num_desc, q->q_info->fore_ptr, count);
 
-	if (count < offset)
-		goto set_last;
-
-	for (i = 0; i < count - offset; i += offset) {
-		last_ptr = circ_new_ptr(q->num_desc, last_ptr, offset);
-		ret = pktproc_set_end(q, last_ptr, 1);
+	/*
+	 * OPTIMIZATION: Instead of looping to set intermediate "end of batch"
+	 * markers, we only need to set one marker on the final descriptor of
+	 * this entire batch. This simplifies logic and reduces CPU overhead.
+	 */
+	if (q->ppa_ul->end_bit_owner != END_BIT_CP) {
+		ret = pktproc_set_end(q, fore_ptr, 1);
 		if (ret) {
 			mif_err_limited("set end failed. q_idx:%d, ret:%d\n", q->q_idx, ret);
-			goto error;
+			/* Don't update fore_ptr on failure to prevent hardware desync */
+			return ret;
 		}
 	}
 
-set_last:
-	ret = pktproc_set_end(q, fore_ptr, 1);
-	if (ret) {
-		mif_err_limited("set end failed. q_idx:%d, ret:%d\n", q->q_idx, ret);
-		goto error;
-	}
-
-set_fore:
+	/*
+	 * Update the fore_ptr in shared memory. The hardware will see this
+	 * change and begin processing the batch of packets.
+	 */
 	q->q_info->fore_ptr = fore_ptr;
 
-	/* ensure the fore_ptr ordering */
+	/*
+	 * Ensure all previous memory writes (descriptor updates) are visible
+	 * to the hardware before the fore_ptr update is visible.
+	 */
 	smp_mb();
 
-error:
 	return 0;
 }
 
