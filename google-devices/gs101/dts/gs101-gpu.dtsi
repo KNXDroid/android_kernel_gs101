@@ -91,8 +91,8 @@
 		gpu_dvfs_step_up_val = <2>;
 
 		/* DVFS Level locks */
-		gpu_dvfs_max_freq = <800000>;
-		gpu_dvfs_min_freq = <250000>;
+		gpu_dvfs_max_freq = <848000>;
+		gpu_dvfs_min_freq = <151000>;
 		gpu_dvfs_min_freq_compute = <450000>; /* When compute work detected */
 
 		/* QOS */
