@@ -1074,6 +1074,12 @@ int dit_read_rx_dst_poll(struct napi_struct *napi, int budget)
 
 			skb = desc_info->dst_skb_buf[ring_num][dst_rp_pos];
 
+			if (unlikely(!skb)) {
+				pr_err_ratelimited("%s: NULL skb at ring %d pos %d\n",
+								   __func__, ring_num, dst_rp_pos);
+				break;
+			}
+
 			/* try to fill dst data buffers */
 			desc_info->dst_skb_buf[ring_num][dst_rp_pos] = NULL;
 			ret = dit_fill_rx_dst_data_buffer(ring_num, 1, false);
