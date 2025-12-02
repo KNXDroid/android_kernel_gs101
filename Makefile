@@ -779,6 +779,30 @@ ifdef CONFIG_INTEGRATE_MODULES
 KBUILD_CFLAGS_MODULE += -include $(srctree)/include/linux/integrated_module.h
 endif
 
+KBUILD_CFLAGS += -fshrink-wrap
+KBUILD_CFLAGS += -fno-semantic-interposition
+KBUILD_CFLAGS += -fno-predictive-commoning
+KBUILD_CFLAGS += -fipa-icf
+KBUILD_CFLAGS += -fno-prefetch-loop-arrays
+KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
+KBUILD_CFLAGS += -fno-unwind-tables
+BUILD_CFLAGS += -fno-tracer
+KBUILD_CFLAGS += -fmerge-all-constants
+KBUILD_CFLAGS += -fno-stack-check
+KBUILD_CFLAGS += -falign-jumps=1
+KBUILD_CFLAGS += -falign-loops=1
+KBUILD_CFLAGS += -falign-labels=1
+KBUILD_CFLAGS += -falign-functions=8
+
+# --- Vectorization Cost Model ---
+KBUILD_CFLAGS += -fvect-cost-model=dynamic
+
+# --- Advanced Register & Pipeline Scheduling ---
+KBUILD_CFLAGS += -fmodulo-sched -fmodulo-sched-allow-regmoves
+KBUILD_CFLAGS += -fira-loop-pressure -fira-hoist-pressure
+KBUILD_CFLAGS += -fsched-pressure
+KBUILD_CFLAGS += -freschedule-modulo-scheduled-loops
+
 ifdef CONFIG_LTO_GCC
 CC_FLAGS_LTO	:= -flto=auto -fipa-pta -fno-fat-lto-objects \
 		   -fuse-linker-plugin -fwhole-program

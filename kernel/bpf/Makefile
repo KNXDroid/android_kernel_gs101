@@ -1,4 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
+KBUILD_CFLAGS += -fno-shrink-wrap
+KBUILD_CFLAGS += -fsemantic-interposition
+KBUILD_CFLAGS += -fpredictive-commoning
+KBUILD_CFLAGS += -fprefetch-loop-arrays
+BUILD_CFLAGS += -ftracer
+KBUILD_CFLAGS += -fno-merge-all-constants
+KBUILD_CFLAGS += -fstack-check
 obj-y := core.o
 ifneq ($(CONFIG_BPF_JIT_ALWAYS_ON),y)
 # ___bpf_prog_run() needs GCSE disabled on x86; see 3193c0836f203 for details
