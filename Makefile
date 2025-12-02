@@ -803,6 +803,8 @@ KBUILD_CFLAGS += -fira-loop-pressure -fira-hoist-pressure
 KBUILD_CFLAGS += -fsched-pressure
 KBUILD_CFLAGS += -freschedule-modulo-scheduled-loops
 
+KBUILD_CFLAGS += -mcpu=cortex-x1
+
 ifdef CONFIG_LTO_GCC
 CC_FLAGS_LTO	:= -flto=auto -fipa-pta -fno-fat-lto-objects \
 		   -fuse-linker-plugin -fwhole-program
