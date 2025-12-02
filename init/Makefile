@@ -3,6 +3,9 @@
 # Makefile for the linux kernel.
 #
 
+CFLAGS_version.o := -fno-lto
+CFLAGS_version-timestamp.o := -fno-lto
+
 ccflags-y := -fno-function-sections -fno-data-sections
 
 obj-y                          := main.o version.o mounts.o
