@@ -32,6 +32,7 @@
 #include <linux/export.h>
 #include <linux/atomic.h>
 #include <linux/display_fps.h>
+#include <linux/fps_listener.h>
 
 #include "exynos_drm_crtc.h"
 #include "exynos_drm_decon.h"
@@ -397,10 +398,14 @@ static void exynos_crtc_atomic_flush(struct drm_crtc *crtc,
 		if (atomic_read(&cpu_input_boost_active)) {
 			atomic_set(&display_fps, 90);
 		} else {
-			if (short_term_current_fps > long_term_average_fps) {
-				atomic_set(&display_fps, short_term_current_fps);
+			if (g_target_fps < short_term_current_fps)  {
+				atomic_set(&display_fps, g_target_fps);
 			} else {
-				atomic_set(&display_fps, long_term_average_fps);
+				if (short_term_current_fps > long_term_average_fps) {
+					atomic_set(&display_fps, short_term_current_fps);
+				} else {
+					atomic_set(&display_fps, long_term_average_fps);
+				}
 			}
 		}
 
