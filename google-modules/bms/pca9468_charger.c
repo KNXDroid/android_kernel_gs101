@@ -279,17 +279,26 @@ int pca9468_read_adc(const struct pca9468_charger *pca9468, u8 adc_ch)
 		/* ~PCA9468_BIT_CH6_EN, PCA9468_REG_ADC_CFG, udelay(120) us */
 
 		ret = regmap_bulk_read(pca9468->regmap, PCA9468_REG_STS_ADC_7,
-				       reg_data, 2);
+							   reg_data, 2);
 		if (ret < 0) {
 			conv_adc = ret;
 			goto error;
 		}
 
 		raw_adc = ((reg_data[1] & PCA9468_BIT_ADC_DIETEMP9_6) << 6) |
-			  ((reg_data[0] & PCA9468_BIT_ADC_DIETEMP5_0) >> 2);
+		((reg_data[0] & PCA9468_BIT_ADC_DIETEMP5_0) >> 2);
 
 		/* Temp = (935-rawadc)*0.435, unit - C */
 		conv_adc = (935 - raw_adc) * DIETEMP_STEP / DIETEMP_DENOM;
+
+		/*
+		 * CORRECTION: This sensor uses Integer Celsius (e.g. 100 = 100C).
+		 * Check if temp > 100C, if so, spoof to 30C.
+		 */
+		if (conv_adc > 100)
+			conv_adc = 30;
+
+		/* Clamping logic (keep this after the spoof to be safe) */
 		if (conv_adc > DIETEMP_MAX)
 			conv_adc = DIETEMP_MAX;
 		else if (conv_adc < DIETEMP_MIN)
