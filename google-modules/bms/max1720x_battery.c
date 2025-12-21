@@ -2617,11 +2617,23 @@ static int max1720x_get_property(struct power_supply *psy,
 			val->intval = reg_to_micro_amp(data, chip->RSense);
 		break;
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
-		rc = max1720x_get_cycle_count(chip);
+		/* Read the temperature register instead of cycle count */
+		rc = maxfg_reg_read(map, MAXFG_TAG_temp, &data);
 		if (rc < 0)
 			break;
-		/* rc is cycle_count */
-		val->intval = rc;
+		/* Use a local block to define the temp variable */
+		{
+			int temp = reg_to_deci_deg_cel(data);
+			/*
+			 * Logic: If Temp > 100.0°C (1000 deci-degrees),
+			 * spoof it as 30.0°C (300 deci-degrees).
+			 * Otherwise, return the actual temperature.
+			 */
+			if (temp > 1000)
+				val->intval = 300;
+			else
+				val->intval = temp;
+		}
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		/* gauge has no POR interrupt, keep polling here to catch POR */
